@@ -27,3 +27,22 @@ class CareerTrajectoryResponse(BaseModel):
     dimension_scores: dict[str, float]   # per-dimension breakdown
     trajectory_label: str                # "Accelerating" / "Steady" / "Plateaued"
     reasons: list[str]
+
+class CompanyEntry(BaseModel):
+    company_name: str
+    role_title: str
+    employee_count: int | None = None        # if known
+    funding_stage: str | None = None         # "seed", "series_a", "public", "bootstrapped"
+    responsibilities: list[str] = []
+    duration_months: int = 12
+
+class CompanyContextRequest(BaseModel):
+    resume_text: str
+    companies: list[CompanyEntry] | None = None
+
+class CompanyContextResponse(BaseModel):
+    company_context_score: float
+    confidence: str
+    per_company_scores: list[dict]
+    scope_multiplier: float          # >1.0 means startup breadth bonus
+    reasons: list[str]
