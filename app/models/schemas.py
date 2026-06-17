@@ -46,3 +46,33 @@ class CompanyContextResponse(BaseModel):
     per_company_scores: list[dict]
     scope_multiplier: float          # >1.0 means startup breadth bonus
     reasons: list[str]
+
+class CoreCandidateRequest(BaseModel):
+    # Semantic Fit
+    resume_text: str
+    job_description: str
+
+    # Career Trajectory (optional structured input)
+    roles: list[RoleEntry] | None = None
+
+    # Company Context (optional structured input)
+    companies: list[CompanyEntry] | None = None
+
+    # Custom weights (optional — let caller tune per role type)
+    weights: dict[str, float] | None = None
+
+class ModuleScore(BaseModel):
+    score: float
+    confidence: str
+    reasons: list[str]
+
+class CoreCandidateResponse(BaseModel):
+    overall_hidden_talent_score: float
+    grade: str                          # A / B / C / D
+    verdict: str                        # "Strong Hidden Talent" etc.
+    semantic_fit: ModuleScore
+    career_growth: ModuleScore
+    company_context: ModuleScore
+    weights_used: dict[str, float]
+    top_reasons: list[str]
+    flags: list[str]                    # warnings e.g. "Low confidence on career data"
