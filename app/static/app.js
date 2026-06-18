@@ -1,5 +1,7 @@
 const resumeInput = document.getElementById('resumeText');
 const jobInput = document.getElementById('jobDescription');
+const resumePDFInput = document.getElementById('resumePDF');
+const jdPDFInput = document.getElementById('jdPDF');
 const semanticResult = document.getElementById('semanticResult');
 const careerResult = document.getElementById('careerResult');
 const companyResult = document.getElementById('companyResult');
@@ -95,11 +97,106 @@ const runCore = async () => {
   }
 };
 
+const handleResumePDFUpload = async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const response = await fetch('/api/v1/pdf/extract-resume', {
+      method: 'POST',
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      throw new Error(data?.detail || 'Failed to extract resume PDF');
+    }
+    
+    const data = await response.json();
+    resumeInput.value = data.resume_text;
+  } catch (error) {
+    alert('Error extracting resume PDF: ' + error.message);
+  }
+};
+
+const handleJDPDFUpload = async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const response = await fetch('/api/v1/pdf/extract-jd', {
+      method: 'POST',
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      throw new Error(data?.detail || 'Failed to extract job description PDF');
+    }
+    
+    const data = await response.json();
+    jobInput.value = data.job_description;
+  } catch (error) {
+    alert('Error extracting job description PDF: ' + error.message);
+  }
+};
+
+const scorePDFs = async () => {
+  try {
+    if (!resumePDFInput.files[0] || !jdPDFInput.files[0]) {
+      alert('Please upload both resume and job description PDFs');
+      return;
+    }
+    
+    semanticResult.innerHTML = '<div class="result-body">Processing PDFs and computing scores…</div>';
+    careerResult.innerHTML = '<div class="result-body">Processing…</div>';
+    companyResult.innerHTML = '<div class="result-body">Processing…</div>';
+    coreResult.innerHTML = '<div class="result-body">Processing…</div>';
+    
+    const formData = new FormData();
+    formData.append('resume_pdf', resumePDFInput.files[0]);
+    formData.append('jd_pdf', jdPDFInput.files[0]);
+    
+    const response = await fetch('/api/v1/pdf/score', {
+      method: 'POST',
+      body: formData,
+    });
+    
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      throw new Error(data?.detail || 'Failed to score PDFs');
+    }
+    
+    const result = await response.json();
+    
+    semanticResult.innerHTML = buildResultHtml('Semantic Fit', result.semantic_fit);
+    careerResult.innerHTML = buildResultHtml('Career Trajectory', result.career_trajectory);
+    companyResult.innerHTML = buildResultHtml('Company Context', result.company_context);
+    coreResult.innerHTML = buildResultHtml('Overall Score', result.overall_score);
+  } catch (error) {
+    showError(semanticResult, error.message);
+    showError(careerResult, error.message);
+    showError(companyResult, error.message);
+    showError(coreResult, error.message);
+  }
+};
+
 const bind = () => {
   document.getElementById('runSemantic').addEventListener('click', runSemantic);
   document.getElementById('runCareer').addEventListener('click', runCareer);
   document.getElementById('runCompany').addEventListener('click', runCompany);
   document.getElementById('runCore').addEventListener('click', runCore);
+  document.getElementById('scorePDFs').addEventListener('click', scorePDFs);
+  
+  // PDF upload handlers
+  resumePDFInput.addEventListener('change', handleResumePDFUpload);
+  jdPDFInput.addEventListener('change', handleJDPDFUpload);
 };
 
 bind();

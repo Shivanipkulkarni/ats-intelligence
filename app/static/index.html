@@ -25,17 +25,30 @@
 
     <section class="form-panel">
       <div class="panel card">
-        <h2>Resume text</h2>
+        <h2>Resume</h2>
+        <div style="margin-bottom: 12px;">
+          <label for="resumePDF" style="display: block; margin-bottom: 8px; font-size: 14px;">📄 Upload PDF</label>
+          <input type="file" id="resumePDF" accept=".pdf" style="width: 100%;" />
+        </div>
+        <p style="text-align: center; color: #999; font-size: 13px; margin: 8px 0;">— or —</p>
+        <label for="resumeText" style="display: block; margin-bottom: 8px; font-size: 14px;">📝 Paste Text</label>
         <textarea id="resumeText" placeholder="Paste the candidate resume content here..."></textarea>
       </div>
 
       <div class="panel card">
-        <h2>Job description</h2>
+        <h2>Job Description</h2>
+        <div style="margin-bottom: 12px;">
+          <label for="jdPDF" style="display: block; margin-bottom: 8px; font-size: 14px;">📄 Upload PDF</label>
+          <input type="file" id="jdPDF" accept=".pdf" style="width: 100%;" />
+        </div>
+        <p style="text-align: center; color: #999; font-size: 13px; margin: 8px 0;">— or —</p>
+        <label for="jobDescription" style="display: block; margin-bottom: 8px; font-size: 14px;">📝 Paste Text</label>
         <textarea id="jobDescription" placeholder="Paste the target job description here..."></textarea>
       </div>
     </section>
 
     <section class="actions-grid">
+      <button id="scorePDFs" class="action-button action-primary" style="grid-column: span 2;">🚀 Score PDFs (All Modules)</button>
       <button id="runSemantic" class="action-button action-primary">Compute Semantic Fit</button>
       <button id="runCareer" class="action-button">Analyze Career Trajectory</button>
       <button id="runCompany" class="action-button">Evaluate Company Context</button>
