@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from app.api.v1 import semantic, career, company_context, core_score, pdf
+from app.api.v1 import semantic, career, company_context, core_score, pdf, skill_decay
 
 app = FastAPI(
     title="ATS Intelligence Engine",
@@ -16,6 +16,7 @@ app.include_router(career.router,           prefix="/api/v1")
 app.include_router(company_context.router,  prefix="/api/v1")
 app.include_router(core_score.router,       prefix="/api/v1")
 app.include_router(pdf.router,              prefix="/api/v1")
+app.include_router(skill_decay.router,      prefix="/api/v1")
 
 @app.get("/")
 def root():

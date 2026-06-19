@@ -76,3 +76,20 @@ class CoreCandidateResponse(BaseModel):
     weights_used: dict[str, float]
     top_reasons: list[str]
     flags: list[str]                    # warnings e.g. "Low confidence on career data"
+    
+class SkillFreshness(BaseModel):
+    skill: str
+    last_used_role: str
+    months_since_used: int
+    freshness_score: float
+    decay_category: str
+
+class SkillDecayRequest(BaseModel):
+    resume_text: str
+    roles: list[RoleEntry] | None = None
+
+class SkillDecayResponse(BaseModel):
+    skill_currency_score: float
+    confidence: str
+    skill_breakdown: list[SkillFreshness]
+    reasons: list[str]
