@@ -93,3 +93,18 @@ class SkillDecayResponse(BaseModel):
     confidence: str
     skill_breakdown: list[SkillFreshness]
     reasons: list[str]
+class GapAnalysis(BaseModel):
+    gap_position: str            # e.g. "Between Engineer and Senior Engineer"
+    gap_months: int
+    recovery_signals_found: list[str]
+    classification: str          # "Adaptive" / "Unexplained" / "Minor"
+
+class CrisisResponseRequest(BaseModel):
+    resume_text: str
+    roles: list[RoleEntry] | None = None
+
+class CrisisResponseResponse(BaseModel):
+    resilience_score: float      # 0-100
+    confidence: str
+    gaps_detected: list[GapAnalysis]
+    reasons: list[str]
