@@ -5,3 +5,7 @@ __pycache__/
 .env
 myenv/
 myenv312/
+cache/
+model_cache/
+*.npy
+*.joblib

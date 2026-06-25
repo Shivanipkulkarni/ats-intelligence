@@ -108,3 +108,87 @@ class CrisisResponseResponse(BaseModel):
     confidence: str
     gaps_detected: list[GapAnalysis]
     reasons: list[str]
+
+class NarrativeCoherenceResponse(BaseModel):
+    narrative_coherence_score: float
+    confidence: str
+    signals: list[str] = []
+    issues: list[str] = []
+    reasons: list[str]
+
+class TeamPortfolioResponse(BaseModel):
+    team_portfolio_score: float
+    confidence: str
+    domains_covered: list[str] = []
+    domain_breakdown: dict[str, list[str]] = {}
+    total_skills_detected: int = 0
+    reasons: list[str]
+
+class ArtifactComplexityResponse(BaseModel):
+    artifact_complexity_score: float
+    confidence: str
+    high_complexity_signals: int = 0
+    medium_complexity_signals: int = 0
+    reasons: list[str]
+
+class CounterfactualResponse(BaseModel):
+    counterfactual_score: float
+    confidence: str
+    avg_seniority_beat: float = 0.0
+    projections_analyzed: int = 0
+    reasons: list[str]
+
+class KeywordMatchResponse(BaseModel):
+    keyword_match_score: float
+    skill_match_rate: float
+    skills_in_jd: int = 0
+    skills_matched: int = 0
+    term_overlap_pct: float = 0.0
+    bigram_overlap_pct: float = 0.0
+    years_experience_match: float = 0.0
+    jd_years_required: float = 0.0
+    resume_years_mentioned: float = 0.0
+    skill_breakdown: list[dict] = []
+
+class BatchResumeRecord(BaseModel):
+    resume_id: str
+    resume_text: str
+    semantic_fit_score: float = 0.0
+    career_growth_score: float = 0.0
+    company_context_score: float = 0.0
+    skill_currency_score: float = 0.0
+    resilience_score: float = 0.0
+    narrative_coherence_score: float = 0.0
+    team_portfolio_score: float = 0.0
+    artifact_complexity_score: float = 0.0
+    counterfactual_score: float = 0.0
+    keyword_match_score: float = 0.0
+    overall_score: float = 0.0
+
+class CandidateResult(BaseModel):
+    rank: int
+    resume_id: str
+    overall_score: float
+    all_scores: dict[str, float]
+    reasons: list[str] = []
+
+class BiasComparisonSummary(BaseModel):
+    overlap_count: int
+    overlap_pct: float
+    lsa_only_count: int
+    keyword_only_count: int
+    avg_rank_shift: float
+
+class BiasComparisonResult(BaseModel):
+    summary: BiasComparisonSummary
+    examples: dict
+
+class ScreeningResponse(BaseModel):
+    job_title: str = ""
+    top_k: int = 100
+    total_resumes_processed: int
+    elapsed_seconds: float
+    candidates: list[CandidateResult]
+    lsa_ranking: list[CandidateResult]
+    keyword_ranking: list[CandidateResult]
+    bias_comparison: BiasComparisonResult | None = None
