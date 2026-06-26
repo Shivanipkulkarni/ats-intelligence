@@ -52,6 +52,9 @@ def main():
     parser.add_argument("--max-features", type=int, default=10000, help="Max TF-IDF features (default: 10000).")
     parser.add_argument("--weights", help="JSON string of dimension weights, e.g. '{\"semantic_fit\":0.4}'")
     parser.add_argument("--verbose", action="store_true", help="Print detailed progress.")
+    parser.add_argument("--tiered", action="store_true", help="Use 3-tier filtering (200K→40K→5K→100) for faster processing.")
+    parser.add_argument("--tier1-size", type=int, default=40000, help="Tier 1 cutoff size (default: 40000).")
+    parser.add_argument("--tier2-size", type=int, default=5000, help="Tier 2 cutoff size (default: 5000).")
 
     args = parser.parse_args()
 
@@ -90,14 +93,28 @@ def main():
             n_components=args.n_components,
             max_features=args.max_features,
         )
-        result = pipeline.run(
-            resume_dir=args.resume_dir,
-            job_description=jd_text,
-            top_k=args.top_k,
-            weights=weights,
-            num_workers=args.workers,
-            cache_dir=args.cache_dir,
-        )
+        
+        if args.tiered:
+            print("Using tiered filtering pipeline for optimized performance...")
+            result = pipeline.run_tiered(
+                resume_dir=args.resume_dir,
+                job_description=jd_text,
+                top_k=args.top_k,
+                weights=weights,
+                num_workers=args.workers,
+                cache_dir=args.cache_dir,
+                tier1_size=args.tier1_size,
+                tier2_size=args.tier2_size,
+            )
+        else:
+            result = pipeline.run(
+                resume_dir=args.resume_dir,
+                job_description=jd_text,
+                top_k=args.top_k,
+                weights=weights,
+                num_workers=args.workers,
+                cache_dir=args.cache_dir,
+            )
 
     output = json.dumps(result, indent=2, default=str)
 
@@ -110,6 +127,14 @@ def main():
         print("SCREENING RESULTS")
         print("=" * 80)
         print(f"Processed {result['total_resumes_processed']} resumes in {result['elapsed_seconds']}s")
+        
+        if result.get("tier_stats"):
+            ts = result["tier_stats"]
+            print(f"\nTiered Processing Breakdown:")
+            print(f"  Tier 1 (Semantic + Keyword): {ts['tier1_elapsed']}s → {ts['tier1_cutoff']} candidates")
+            print(f"  Tier 2 (Medium Heuristics):  {ts['tier2_elapsed']}s → {ts['tier2_cutoff']} candidates")
+            print(f"  Tier 3 (Deep Analysis):      {ts['tier3_elapsed']}s → {args.top_k} candidates")
+        
         print(f"\nTop {args.top_k} Candidates:")
         print("-" * 80)
         for c in result["candidates"][:10]:
