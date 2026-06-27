@@ -263,10 +263,36 @@ run_btn = st.button("⚡  Run Ranking", use_container_width=True)
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 if run_btn:
     if not uploaded_file:
-        st.error("Upload a candidates.jsonl file first.")
+        st.error("Upload a candidates file first.")
         st.stop()
-    if not jd_text.strip():
-        st.error("Enter a job description first.")
+
+    # resolve JD text: file takes priority over text box
+    final_jd = jd_text.strip()
+    if jd_file is not None:
+        fname = jd_file.name.lower()
+        if fname.endswith(".docx"):
+            try:
+                import docx
+                from io import BytesIO
+                doc = docx.Document(BytesIO(jd_file.getvalue()))
+                final_jd = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            except ImportError:
+                st.error("python-docx not installed. Run: pip install python-docx")
+                st.stop()
+        elif fname.endswith(".pdf"):
+            try:
+                import pdfplumber
+                from io import BytesIO
+                with pdfplumber.open(BytesIO(jd_file.getvalue())) as pdf:
+                    final_jd = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            except ImportError:
+                st.error("pdfplumber not installed. Run: pip install pdfplumber")
+                st.stop()
+        else:
+            final_jd = jd_file.getvalue().decode("utf-8", errors="ignore")
+
+    if not final_jd:
+        st.error("Enter a job description or upload a JD file.")
         st.stop()
 
     progress = st.progress(0)
@@ -279,14 +305,22 @@ if run_btn:
         from app.services.behavioral_signals.scorer import apply_behavioral_multiplier
         from app.services.honeypot_detector import HoneypotDetector
 
-        # 1 — load
-        status.info("Loading candidates…")
+        # 1 — load (handle both JSON array and JSONL)
+        status.info("📂  Loading candidates…")
         progress.progress(8)
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jsonl")
-        tmp.write(uploaded_file.getvalue())
-        tmp.close()
-        candidates = load_candidates_jsonl(tmp.name)
-        os.unlink(tmp.name)
+        import json as _json
+        raw_text = uploaded_file.getvalue().decode("utf-8", errors="ignore").strip()
+        jsonl_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jsonl", mode="w", encoding="utf-8")
+        if raw_text.startswith("["):
+            for item in _json.loads(raw_text):
+                jsonl_tmp.write(_json.dumps(item) + "\n")
+        else:
+            for line in raw_text.splitlines():
+                if line.strip():
+                    jsonl_tmp.write(line.strip() + "\n")
+        jsonl_tmp.close()
+        candidates = load_candidates_jsonl(jsonl_tmp.name)
+        os.unlink(jsonl_tmp.name)
 
         if not candidates:
             st.error("No valid candidates found in the file.")
@@ -296,7 +330,7 @@ if run_btn:
             st.warning("Truncated to first 100 candidates.")
 
         # 2 — honeypots
-        status.info(" Detecting honeypots…")
+        status.info("🍯  Detecting honeypots…")
         progress.progress(20)
         detector = HoneypotDetector(strict_mode=False)
         valid_data, honeypots = detector.filter_honeypots([c["candidate_data"] for c in candidates])
@@ -316,7 +350,7 @@ if run_btn:
         )
 
         # 4 — behavioral signals
-        status.info(" Applying behavioral signals…")
+        status.info("📊  Applying behavioral signals…")
         progress.progress(60)
         jd_requirements  = parse_jd_requirements(final_jd)
         candidate_lookup = {c["candidate_id"]: c["candidate_data"] for c in candidates}
@@ -336,7 +370,7 @@ if run_btn:
             rc["rank"] = i
 
         # 5 — reasoning
-        status.info(" Generating reasoning…")
+        status.info("💬  Generating reasoning…")
         progress.progress(80)
         reasoning_gen = ReasoningGenerator(jd_requirements)
         for rc in result["candidates"]:
@@ -387,44 +421,154 @@ if run_btn:
         </div>
         """, unsafe_allow_html=True)
 
-        st.download_button(
-            "Download Ranked CSV",
-            data=csv_data,
-            file_name="ranking_results.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+        def _build_excel_reasoning(rc, scores, full_data=None):
+            if full_data is None:
+                full_data = rc.get("candidate_data", {})
+            profile  = full_data.get("profile", {})
+            career   = full_data.get("career_history", [])
+            skills   = full_data.get("skills", [])
+            yoe      = profile.get("years_of_experience", 0)
+            title    = profile.get("current_title", "")
+            company  = profile.get("current_company", "")
+            industry = profile.get("current_industry", "")
+            loc      = profile.get("location", "")
+            summary  = profile.get("summary", "")
+
+            # Line 1: Who they are
+            line1 = (
+                f"{title} with {yoe:.1f} years of experience, currently at {company}"
+                + (f" ({industry})" if industry else "")
+                + (f", based in {loc}." if loc else ".")
+            )
+
+            # Line 2: Career background from recent roles
+            if career:
+                recent = career[:2]
+                role_parts = []
+                for r in recent:
+                    desc = r.get("description", "")
+                    first_sent = desc.split(".")[0].strip() if desc else ""
+                    if first_sent:
+                        role_parts.append(first_sent)
+                line2 = " Previously, ".join(role_parts) + "." if role_parts else ""
+            else:
+                line2 = summary[:200] + "..." if len(summary) > 200 else summary
+
+            # Line 3: Top skills by proficiency
+            prof_order = {"expert": 4, "advanced": 3, "intermediate": 2, "beginner": 1}
+            top_skills = sorted(skills, key=lambda x: prof_order.get(x.get("proficiency",""), 0), reverse=True)[:6]
+            adv_skills = [s["name"] for s in top_skills if s.get("proficiency") in ("expert","advanced")]
+            mid_skills = [s["name"] for s in top_skills if s.get("proficiency") == "intermediate"]
+            skill_parts = []
+            if adv_skills:
+                skill_parts.append(f"Advanced/Expert in {', '.join(adv_skills[:3])}")
+            if mid_skills:
+                skill_parts.append(f"intermediate proficiency in {', '.join(mid_skills[:3])}")
+            line3 = "Skills: " + "; ".join(skill_parts) + "." if skill_parts else ""
+
+            # Line 4: Career growth + fit signal
+            cgrow   = scores.get("career_growth", 0)
+            sem     = scores.get("semantic_fit", 0)
+            overall = rc.get("overall_score", 0)
+            growth_txt = "strong upward career trajectory" if cgrow > 70 else ("steady career progression" if cgrow > 50 else "limited career growth signals")
+            fit_txt    = "strong JD alignment" if sem > 75 else ("moderate JD fit" if sem > 50 else "partial JD alignment")
+            line4 = f"Assessment: {growth_txt.capitalize()} with {fit_txt}. Overall ranking score: {overall:.1f}."
+
+            return "\n".join(p for p in [line1, line2, line3, line4] if p)
+
+        scores_lookup = {rc.get("resume_id",""): rc.get("all_scores", {}) for rc in result["candidates"]}
+        # Build a lookup of full candidate data by id
+        full_data_lookup = {c["candidate_id"]: c["candidate_data"] for c in candidates}
+
+        # Build Excel file in memory
+        import io
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Rankings"
+            headers = ["Rank", "Candidate ID", "Name", "Score", "Reasoning"]
+            header_fill = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
+            for col, h in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col, value=h)
+                cell.font = Font(bold=True, color="FFFFFF")
+                cell.fill = header_fill
+                cell.alignment = Alignment(horizontal="center")
+            for rc in result["candidates"]:
+                ws.append([
+                    rc.get("rank"),
+                    rc.get("resume_id") or rc.get("candidate_id", ""),
+                    full_data_lookup.get(rc.get("resume_id","").replace(".txt",""), {}).get("profile", {}).get("anonymized_name", ""),
+                    round((rc.get("overall_score", 0)) / 100, 4),
+                    _build_excel_reasoning(rc, scores_lookup.get(rc.get("resume_id",""), {}), full_data_lookup.get(rc.get("resume_id","").replace(".txt",""), {})),
+                ])
+            ws.column_dimensions["A"].width = 8
+            ws.column_dimensions["B"].width = 22
+            ws.column_dimensions["C"].width = 20
+            ws.column_dimensions["D"].width = 10
+            ws.column_dimensions["E"].width = 90
+            for row in ws.iter_rows(min_row=2):
+                row[4].alignment = Alignment(wrap_text=True, vertical="top")
+            ws.row_dimensions[1].height = 20
+            excel_buf = io.BytesIO()
+            wb.save(excel_buf)
+            excel_data = excel_buf.getvalue()
+            excel_ok = True
+        except ImportError:
+            excel_ok = False
+
+        col_csv, col_xl = st.columns(2)
+        with col_csv:
+            st.download_button(
+                "📥  Download CSV",
+                data=csv_data,
+                file_name="ranking_results.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        with col_xl:
+            if excel_ok:
+                st.download_button(
+                    "📊  Download Excel",
+                    data=excel_data,
+                    file_name="ranking_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            else:
+                st.warning("Install openpyxl for Excel export: pip install openpyxl")
 
         st.markdown("<hr class='divider'>", unsafe_allow_html=True)
-        st.markdown("#### Top 10 Candidates")
+        st.markdown(f"#### 🏆 Top {len(result['candidates'])} Candidates")
 
-        for rc in result["candidates"][:10]:
-            scores     = rc.get("all_scores", {})
-            bars_html  = ""
-            for dim, val in list(scores.items())[:5]:
-                pct = min(max(val, 0), 100)
-                bars_html += f"""
-                <div class="score-bar-wrap">
-                    <div class="score-bar-label">
-                        <span>{dim.replace("_"," ").title()}</span>
-                        <span>{val:.0f}</span>
-                    </div>
-                    <div class="score-bar-bg">
-                        <div class="score-bar-fill" style="width:{pct}%"></div>
-                    </div>
-                </div>"""
+        for rc in result["candidates"]:
+            scores = rc.get("all_scores", {})
+            bars_html = ""
+            SKIP_DIMS = {"resilience"}
+            filtered_scores = [(d,v) for d,v in scores.items() if d.lower() not in SKIP_DIMS]
+            for dim, val in filtered_scores[:5]:
+                pct = min(max(float(val), 0), 100)
+                dim_label = dim.replace("_", " ").title()
+                bars_html += (
+                    f'<div class="score-bar-wrap">'
+                    f'<div class="score-bar-label"><span>{dim_label}</span><span>{val:.0f}</span></div>'
+                    f'<div class="score-bar-bg"><div class="score-bar-fill" style="width:{pct:.1f}%"></div></div>'
+                    f'</div>'
+                )
 
-            st.markdown(f"""
-            <div class="cand-card">
-                <div class="cand-header">
-                    <span class="cand-rank">Rank #{rc['rank']}</span>
-                    <span class="cand-score">Score {rc['overall_score']:.1f}</span>
-                </div>
-                <div class="cand-id">{rc['resume_id']}</div>
-                <div class="cand-reason">{rc.get('reasoning','—')}</div>
-                {bars_html}
-            </div>
-            """, unsafe_allow_html=True)
+            card_html = (
+                f'<div class="cand-card">'
+                f'<div class="cand-header">'
+                f'<span class="cand-rank">Rank #{rc["rank"]}</span>'
+                f'<span class="cand-score">Score {rc["overall_score"]:.1f}</span>'
+                f'</div>'
+                f'<div class="cand-id">{rc["resume_id"]} — {full_data_lookup.get(rc["resume_id"].replace(".txt",""), {}).get("profile", {}).get("anonymized_name", "")}</div>'
+                f'<div class="cand-reason">{rc.get("reasoning", "—")}</div>'
+                + bars_html +
+                f'</div>'
+            )
+            st.markdown(card_html, unsafe_allow_html=True)
 
     except Exception as exc:
         import traceback
