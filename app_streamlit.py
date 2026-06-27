@@ -452,7 +452,7 @@ if run_btn:
                         role_parts.append(first_sent)
                 line2 = " Previously, ".join(role_parts) + "." if role_parts else ""
             else:
-                line2 = summary[:200] + "..." if len(summary) > 200 else summary
+                line2 = summary[:500] + "..." if len(summary) > 500 else summary
 
             # Line 3: Top skills by proficiency
             prof_order = {"expert": 4, "advanced": 3, "intermediate": 2, "beginner": 1}
