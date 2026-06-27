@@ -258,7 +258,7 @@ with col2:
 top_k = st.number_input("Top candidates to rank", min_value=10, max_value=100, value=50, step=1)
 
 st.markdown("<hr class='divider'>", unsafe_allow_html=True)
-run_btn = st.button("⚡  Run Ranking", use_container_width=True)
+run_btn = st.button("Run Ranking", use_container_width=True)
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 if run_btn:
@@ -306,7 +306,7 @@ if run_btn:
         from app.services.honeypot_detector import HoneypotDetector
 
         # 1 — load (handle both JSON array and JSONL)
-        status.info("📂  Loading candidates…")
+        status.info("Loading candidates…")
         progress.progress(8)
         import json as _json
         raw_text = uploaded_file.getvalue().decode("utf-8", errors="ignore").strip()
@@ -330,7 +330,7 @@ if run_btn:
             st.warning("Truncated to first 100 candidates.")
 
         # 2 — honeypots
-        status.info("🍯  Detecting honeypots…")
+        status.info("Detecting honeypots…")
         progress.progress(20)
         detector = HoneypotDetector(strict_mode=False)
         valid_data, honeypots = detector.filter_honeypots([c["candidate_data"] for c in candidates])
@@ -338,7 +338,7 @@ if run_btn:
         candidates = [c for c in candidates if c["candidate_id"] in valid_ids]
 
         # 3 — pipeline
-        status.info("⚙️  Running screening pipeline…")
+        status.info("Running screening pipeline…")
         progress.progress(35)
         temp_dir = tempfile.mkdtemp()
         save_temp_resumes(candidates, temp_dir)
@@ -350,7 +350,7 @@ if run_btn:
         )
 
         # 4 — behavioral signals
-        status.info("📊  Applying behavioral signals…")
+        status.info("Applying behavioral signals…")
         progress.progress(60)
         jd_requirements  = parse_jd_requirements(final_jd)
         candidate_lookup = {c["candidate_id"]: c["candidate_data"] for c in candidates}
@@ -370,7 +370,7 @@ if run_btn:
             rc["rank"] = i
 
         # 5 — reasoning
-        status.info("💬  Generating reasoning…")
+        status.info("Generating reasoning…")
         progress.progress(80)
         reasoning_gen = ReasoningGenerator(jd_requirements)
         for rc in result["candidates"]:
@@ -521,7 +521,7 @@ if run_btn:
         col_csv, col_xl = st.columns(2)
         with col_csv:
             st.download_button(
-                "📥  Download CSV",
+                "Download CSV",
                 data=csv_data,
                 file_name="ranking_results.csv",
                 mime="text/csv",
@@ -530,7 +530,7 @@ if run_btn:
         with col_xl:
             if excel_ok:
                 st.download_button(
-                    "📊  Download Excel",
+                    "Download Excel",
                     data=excel_data,
                     file_name="ranking_results.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -540,12 +540,12 @@ if run_btn:
                 st.warning("Install openpyxl for Excel export: pip install openpyxl")
 
         st.markdown("<hr class='divider'>", unsafe_allow_html=True)
-        st.markdown(f"#### 🏆 Top {len(result['candidates'])} Candidates")
+        st.markdown(f"#### Top {len(result['candidates'])} Candidates")
 
         for rc in result["candidates"]:
             scores = rc.get("all_scores", {})
             bars_html = ""
-            SKIP_DIMS = {"resilience"}
+            SKIP_DIMS = {"resilience", "narrative_coherence"}
             filtered_scores = [(d,v) for d,v in scores.items() if d.lower() not in SKIP_DIMS]
             for dim, val in filtered_scores[:5]:
                 pct = min(max(float(val), 0), 100)
