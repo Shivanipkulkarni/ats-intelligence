@@ -172,8 +172,8 @@ class BatchPipeline:
         weights: dict[str, float] | None = None,
         num_workers: int | None = None,
         cache_dir: str | None = None,
-        tier1_size: int = 40000,
-        tier2_size: int = 5000,
+        tier1_size: int = 2000,
+        tier2_size: int = 500,
     ) -> dict:
         """
         Three-tiered filtering pipeline for efficient large-scale resume screening.
@@ -224,29 +224,20 @@ class BatchPipeline:
         semantic_scores = self.semantic_engine.similarity(jd_vec, self.lsa_matrix)
         raw_sem_scores = ((semantic_scores + 1) / 2) * 100  # Normalize to 0-100
 
-        # Compute keyword scores for all resumes (parallel)
-        print(f"Computing keyword match scores ({num_workers} workers)...")
-        kw_start = time.time()
-        kw_results = _run_parallel_keyword(records, job_description, num_workers)
-        kw_scores_map = {r["resume_id"]: r["keyword_match_score"] for r in kw_results}
-        print(f"Keyword scores computed in {time.time() - kw_start:.2f}s.")
-
-        # Tier 1 scoring: 70% semantic + 30% keyword
-        print("Ranking candidates for Tier 1...")
+        # SPEED FIX: Skip keyword scoring on full corpus (too slow for 100K resumes).
+        # Tier 1 uses semantic-only scoring (LSA is already vectorised, runs in <10s).
+        # Keyword scoring runs in Tier 2 on the shortlist (~500 candidates) only.
+        print("Ranking candidates for Tier 1 (semantic-only, fast)...")
         tier1_candidates = []
         for i in range(n):
             rid = records[i]["resume_id"]
             sem_score = round(float(raw_sem_scores[i]), 2)
-            kw_score = kw_scores_map.get(rid, 0)
-            
-            tier1_score = round(sem_score * 0.7 + kw_score * 0.3, 2)
-            
             tier1_candidates.append({
                 "resume_id": rid,
                 "resume_text": records[i]["resume_text"],
                 "semantic_fit": sem_score,
-                "keyword_match": kw_score,
-                "tier1_score": tier1_score,
+                "keyword_match": 0,   # computed in Tier 2
+                "tier1_score": sem_score,
             })
 
         # Sort and filter to top tier1_size candidates
@@ -271,6 +262,13 @@ class BatchPipeline:
         tier2_signals = _run_parallel_tier2(tier1_shortlist, num_workers)
         
         # Tier 2 scoring: semantic 35%, keyword 15%, narrative 20%, portfolio 15%, artifact 15%
+        # Keyword scoring here on shortlist (~500) instead of full 100K corpus
+        print(f"Computing keyword scores on Tier 1 shortlist ({len(tier1_shortlist)} candidates)...")
+        kw_results = _run_parallel_keyword(tier1_shortlist, job_description, num_workers)
+        kw_scores_map = {r["resume_id"]: r["keyword_match_score"] for r in kw_results}
+        for c in tier1_shortlist:
+            c["keyword_match"] = kw_scores_map.get(c["resume_id"], 0)
+
         tier2_candidates = []
         for i, candidate in enumerate(tier1_shortlist):
             signals = tier2_signals[i]

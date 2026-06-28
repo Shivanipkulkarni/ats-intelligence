@@ -137,7 +137,7 @@ class HoneypotDetector:
             if proficiency in ['advanced', 'expert'] and duration == 0:
                 expert_zero_duration.append(name)
         
-        if len(expert_zero_duration) >= 3:  # 3+ is suspicious
+        if len(expert_zero_duration) >= 5:  # 5+ is suspicious
             reasons.append(
                 f"{len(expert_zero_duration)} expert skills with 0 duration: "
                 f"{', '.join(expert_zero_duration[:5])}"
@@ -151,7 +151,7 @@ class HoneypotDetector:
             if s.get('proficiency') in ['advanced', 'expert']
         ]
         
-        if len(expert_skills) >= 15:  # 15+ expert skills is unlikely
+        if len(expert_skills) >= 20:  # 20+ expert skills is unlikely
             reasons.append(
                 f"{len(expert_skills)} expert-level skills (impossible breadth)"
             )
@@ -284,7 +284,7 @@ class HoneypotDetector:
         # =====================================================================
         # Decision
         # =====================================================================
-        is_honeypot = len(reasons) >= 2  # Need at least 2 red flags
+        is_honeypot = len(reasons) >= 3  # Need at least 3 red flags to avoid false positives
         
         return is_honeypot, reasons
     

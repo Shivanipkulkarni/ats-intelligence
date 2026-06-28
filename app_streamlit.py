@@ -237,7 +237,8 @@ with col1:
         type=["jsonl", "json"],
         label_visibility="collapsed",
     )
-    st.caption("JSON or JSONL · max 100 candidates")
+    st.caption("JSON or JSONL · up to 100,000 candidates")
+    top_k = st.number_input("Top candidates to rank", min_value=10, max_value=100, value=100, step=1)
 
 with col2:
     st.markdown('<div class="card-label">Job Description</div>', unsafe_allow_html=True)
@@ -255,13 +256,13 @@ with col2:
         label_visibility="collapsed",
     )
 
-top_k = st.number_input("Top candidates to rank", min_value=10, max_value=100, value=50, step=1)
-
 st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 run_btn = st.button("Run Ranking", use_container_width=True)
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
 if run_btn:
+    import time
+    wall_clock_start = time.time()
     if not uploaded_file:
         st.error("Upload a candidates file first.")
         st.stop()
@@ -306,7 +307,7 @@ if run_btn:
         from app.services.honeypot_detector import HoneypotDetector
 
         # 1 — load (handle both JSON array and JSONL)
-        status.info("Loading candidates…")
+        status.info("Reading uploaded file...")
         progress.progress(8)
         import json as _json
         raw_text = uploaded_file.getvalue().decode("utf-8", errors="ignore").strip()
@@ -315,9 +316,13 @@ if run_btn:
             for item in _json.loads(raw_text):
                 jsonl_tmp.write(_json.dumps(item) + "\n")
         else:
-            for line in raw_text.splitlines():
+            for i, line in enumerate(raw_text.splitlines()):
+
                 if line.strip():
                     jsonl_tmp.write(line.strip() + "\n")
+
+                if i % 10000 == 0 and i > 0:
+                    status.info(f"Loading... {i:,} candidates")
         jsonl_tmp.close()
         candidates = load_candidates_jsonl(jsonl_tmp.name)
         os.unlink(jsonl_tmp.name)
@@ -325,8 +330,8 @@ if run_btn:
         if not candidates:
             st.error("No valid candidates found in the file.")
             st.stop()
-        if len(candidates) > 100:
-            candidates = candidates[:100]
+        if len(candidates) > 100000:
+            candidates = candidates[:100000]
             st.warning("Truncated to first 100 candidates.")
 
         # 2 — honeypots
@@ -395,7 +400,8 @@ if run_btn:
         status.empty()
 
         # ── Results ──────────────────────────────────────────────────────────
-        elapsed = result["elapsed_seconds"]
+        wall_clock_elapsed = time.time() - wall_clock_start
+        pipeline_elapsed = result["elapsed_seconds"]
         n_total = result["total_resumes_processed"]
         n_honey = len(honeypots)
         n_out   = len(result["candidates"])
@@ -415,8 +421,12 @@ if run_btn:
                 <div class="stat-lbl">Honeypots removed</div>
             </div>
             <div class="stat-pill">
-                <div class="stat-val">{elapsed:.1f}s</div>
-                <div class="stat-lbl">Total time</div>
+                <div class="stat-val">
+                    {wall_clock_elapsed/60:.1f} min
+                </div>
+                <div class="stat-lbl">
+                    Wall-clock time
+                </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
