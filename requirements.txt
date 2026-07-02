@@ -2,6 +2,7 @@ scikit-learn>=1.4.0
 numpy>=1.26.0
 scipy>=1.13.0
 joblib>=1.4.0
+orjson>=3.10.0
 python-dotenv>=1.0.0
 pydantic>=2.7.0
 pydantic-settings>=2.0.0
@@ -9,3 +10,4 @@ python-docx
 pdfplumber
 openpyxl
 streamlit>=1.35.0
+

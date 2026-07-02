@@ -1,29 +1,21 @@
-#!/usr/bin/env python3
+
 """
 Hackathon Submission Generator
-
-Generates properly formatted CSV submission for Redrob Hackathon v4.
 
 Usage:
     python generate_submission.py \
         --candidates ./docs/candidates.jsonl \
         --jd ./docs/job_description.txt \
         --output team_xxx.csv
-
-This script:
-1. Loads candidates from JSONL
-2. Runs the screening pipeline
-3. Generates non-templated reasoning for each candidate
-4. Outputs CSV in exact submission format (100 rows)
 """
 
 import argparse
+import csv
 import json
 import sys
 import os
 from pathlib import Path
 
-# Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.services.batch.pipeline import BatchPipeline
@@ -34,56 +26,27 @@ from app.services.honeypot_detector import HoneypotDetector
 
 
 def load_candidates_jsonl(jsonl_path: str) -> list[dict]:
-    """
-    Load candidates from JSONL file.
-    
-    Expected format:
-    {"candidate_id": "CAND_0000001", "profile": {...}, "career_history": [...], ...}
-    
-    Returns:
-        List of candidate dicts with candidate_data and resume_text
-    """
     candidates = []
-    
     with open(jsonl_path, 'r', encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
-            
             try:
                 data = json.loads(line)
-                
-                # Extract text representation for screening
-                # Combine profile, career history, and skills into searchable text
                 resume_text = _candidate_to_text(data)
-                
                 candidates.append({
                     'candidate_id': data.get('candidate_id', f'CAND_{line_num:07d}'),
                     'resume_text': resume_text,
-                    'candidate_data': data  # Keep full data for reasoning
+                    'candidate_data': data
                 })
-                
             except json.JSONDecodeError as e:
                 print(f"Warning: Skipping invalid JSON on line {line_num}: {e}")
-                continue
-    
     return candidates
 
 
 def _candidate_to_text(candidate: dict) -> str:
-    """
-    Convert structured candidate JSON to text for TF-IDF processing.
-    
-    Extracts:
-    - Profile summary, headline, title, company
-    - Career history descriptions
-    - Skills list
-    - Education
-    """
     parts = []
-    
-    # Profile
     if 'profile' in candidate:
         profile = candidate['profile']
         parts.append(profile.get('headline', ''))
@@ -91,295 +54,298 @@ def _candidate_to_text(candidate: dict) -> str:
         parts.append(profile.get('current_title', ''))
         parts.append(profile.get('current_company', ''))
         parts.append(profile.get('location', ''))
-    
-    # Career history
     if 'career_history' in candidate:
         for role in candidate['career_history']:
             parts.append(role.get('title', ''))
             parts.append(role.get('company', ''))
             parts.append(role.get('description', ''))
-    
-    # Skills
     if 'skills' in candidate:
         skill_names = [s.get('name', '') for s in candidate['skills']]
         parts.append(' '.join(skill_names))
-    
-    # Education
     if 'education' in candidate:
         for edu in candidate['education']:
             parts.append(edu.get('institution', ''))
             parts.append(edu.get('degree', ''))
             parts.append(edu.get('field_of_study', ''))
-    
     return ' '.join(filter(None, parts))
 
 
 def save_temp_resumes(candidates: list[dict], temp_dir: str) -> str:
-    """
-    Save candidates as individual text files for pipeline processing.
-    
-    Args:
-        candidates: List of candidate dicts with resume_text
-        temp_dir: Temporary directory to save files
-    
-    Returns:
-        Path to temp directory
+    """Write shortlisted resumes as one JSONL file for fast batch loading.
+
+    The batch pipeline already supports a `resumes.jsonl` file. Using that
+    avoids creating thousands of tiny .txt files, which is especially slow on
+    Windows and was the main bottleneck for 100k-candidate runs.
     """
     temp_path = Path(temp_dir)
     temp_path.mkdir(parents=True, exist_ok=True)
-    
-    for candidate in candidates:
-        cid = candidate['candidate_id']
-        text = candidate['resume_text']
-        
-        file_path = temp_path / f"{cid}.txt"
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(text)
-    
+    jsonl_path = temp_path / "resumes.jsonl"
+    with open(jsonl_path, 'w', encoding='utf-8') as f:
+        for candidate in candidates:
+            f.write(json.dumps({
+                'id': candidate['candidate_id'],
+                'resume_text': candidate['resume_text'],
+            }, ensure_ascii=False) + '\n')
     return str(temp_path)
 
 
+def save_temp_resumes_as_txt(candidates: list[dict], temp_dir: str) -> str:
+    """Legacy writer kept for debugging or comparison."""
+    temp_path = Path(temp_dir)
+    temp_path.mkdir(parents=True, exist_ok=True)
+    for candidate in candidates:
+        cid = candidate['candidate_id']
+        file_path = temp_path / f"{cid}.txt"
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(candidate['resume_text'])
+    return str(temp_path)
+
+
+def prefilter_candidates_tfidf(
+    candidates: list[dict],
+    jd_text: str,
+    limit: int = 2000,
+    max_features: int = 8000,
+) -> list[dict]:
+    """Fast in-memory shortlist before the heavier ranking pipeline."""
+    if len(candidates) <= limit:
+        return candidates
+
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.metrics.pairwise import cosine_similarity
+    import numpy as np
+
+    texts = [c['resume_text'] for c in candidates]
+    vec = TfidfVectorizer(max_features=max_features, stop_words='english')
+    mat = vec.fit_transform(texts)
+    jd_vec = vec.transform([jd_text])
+    sims = cosine_similarity(jd_vec, mat).flatten()
+    top_idx = np.argsort(sims)[::-1][:limit]
+    return [candidates[i] for i in top_idx]
+
+
+def write_submission_xlsx(candidates: list[dict], output_path: str) -> dict:
+    """Write an Excel copy of the submission with the same four spec columns."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError as exc:
+        raise RuntimeError("openpyxl is required for Excel output") from exc
+
+    wb = Workbook(write_only=False)
+    ws = wb.active
+    ws.title = "Rankings"
+
+    headers = ['candidate_id', 'rank', 'score', 'reasoning']
+    header_fill = PatternFill(start_color="4F46E5", end_color="4F46E5", fill_type="solid")
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    for candidate in sorted(candidates, key=lambda x: x.get('rank', 999)):
+        candidate_id = candidate.get('resume_id') or candidate.get('candidate_id')
+        score = candidate.get('overall_score', 0) / 100
+        reasoning = candidate.get('reasoning', '').replace('\r', '').strip()
+        ws.append([candidate_id, candidate.get('rank'), round(score, 4), reasoning])
+
+    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["B"].width = 8
+    ws.column_dimensions["C"].width = 10
+    ws.column_dimensions["D"].width = 90
+    for row in ws.iter_rows(min_row=2):
+        row[3].alignment = Alignment(wrap_text=True, vertical="top")
+
+    wb.save(output_path)
+    return {'success': True, 'output_path': output_path, 'rows_written': len(candidates)}
+
+
+def build_reasoning(rc: dict, full_data: dict, scores: dict) -> str:
+    """Build 1-2 line honest reasoning referencing actual profile facts."""
+    profile  = full_data.get('profile', {})
+    skills   = full_data.get('skills', [])
+    career   = full_data.get('career_history', [])
+
+    yoe      = profile.get('years_of_experience', 0)
+    title    = profile.get('current_title', '')
+    company  = profile.get('current_company', '')
+    industry = profile.get('current_industry', '')
+
+    # Top advanced/expert skills
+    prof_order = {'expert': 4, 'advanced': 3, 'intermediate': 2, 'beginner': 1}
+    top_skills = sorted(skills, key=lambda x: prof_order.get(x.get('proficiency', ''), 0), reverse=True)
+    adv = [s['name'] for s in top_skills if s.get('proficiency') in ('expert', 'advanced')][:3]
+    mid = [s['name'] for s in top_skills if s.get('proficiency') == 'intermediate'][:2]
+
+    sem   = scores.get('semantic_fit', 0)
+    cgrow = scores.get('career_growth', 0)
+    rank  = rc.get('rank', 0)
+    overall = rc.get('overall_score', 0)
+
+    # Line 1: profile summary
+    skill_str = ', '.join(adv) if adv else ', '.join(mid) if mid else 'general skills'
+    line1 = f"{yoe:.0f} yrs exp as {title} at {company} ({industry}); strong in {skill_str}."
+
+    # Line 2: honest fit assessment with concerns
+    concerns = []
+    strengths = []
+    if sem > 75:   strengths.append("strong JD alignment")
+    elif sem > 50: strengths.append("moderate JD fit")
+    else:          concerns.append("limited JD alignment")
+    if cgrow > 65: strengths.append("clear career growth")
+    elif cgrow < 40: concerns.append("flat career trajectory")
+    if yoe < 3:    concerns.append(f"low experience ({yoe:.0f} yrs, JD wants 5-9)")
+    elif yoe > 12: strengths.append("deep domain experience")
+
+    tone = "Strong fit" if rank <= 15 else ("Good fit" if rank <= 40 else ("Moderate fit" if rank <= 70 else "Weak fit"))
+    concern_str = f" Concerns: {'; '.join(concerns)}." if concerns else ""
+    strength_str = f" {'; '.join(strengths).capitalize()}." if strengths else ""
+    line2 = f"{tone} - overall score {overall:.1f}/100.{strength_str}{concern_str}"
+
+    return f"{line1} {line2}"
+
+
 def main():
-    parser = argparse.ArgumentParser(
-        description="Generate hackathon submission CSV",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__
-    )
-    parser.add_argument('--candidates', required=True, help='Path to candidates.jsonl')
-    parser.add_argument('--jd', '--jd-file', dest='jd_file', required=True, help='Path to job_description.txt')
-    parser.add_argument('--output', required=True, help='Output CSV path (e.g., team_xxx.csv)')
-    parser.add_argument('--top-k', type=int, default=100, help='Number of candidates (must be 100 for submission)')
-    parser.add_argument('--tiered', action='store_true', default=True, help='Use 3-tier filtering (default: True)')
-    parser.add_argument('--workers', type=int, default=8, help='Number of parallel workers (default: 8)')
-    parser.add_argument('--temp-dir', default='./temp_resumes', help='Temporary directory for processing')
-    parser.add_argument('--validate-only', action='store_true', help='Only validate, do not write CSV')
-    parser.add_argument('--verbose', action='store_true', help='Print detailed progress')
-    
+    parser = argparse.ArgumentParser(description="Generate hackathon submission CSV")
+    parser.add_argument('--candidates', required=True)
+    parser.add_argument('--jd', '--jd-file', dest='jd_file', required=True)
+    parser.add_argument('--output', required=True)
+    parser.add_argument('--excel-output', default=None)
+    parser.add_argument('--top-k', type=int, default=100)
+    parser.add_argument('--tiered', action='store_true', default=True)
+    parser.add_argument('--workers', type=int, default=8)
+    parser.add_argument('--temp-dir', default='./temp_resumes')
+    parser.add_argument('--validate-only', action='store_true')
+    parser.add_argument('--verbose', action='store_true')
     args = parser.parse_args()
-    
-    # Validate top-k is 100
+
     if args.top_k != 100:
-        print(f"Warning: Submission requires exactly 100 candidates. Setting --top-k to 100.")
         args.top_k = 100
-    
+
     print(f"{'='*80}")
     print("HACKATHON SUBMISSION GENERATOR")
     print(f"{'='*80}\n")
-    
-    # Step 1: Load job description
-    print(f"[1/6] Loading job description from {args.jd_file}...")
+
+    # Step 1: Load JD
+    print(f"[1/7] Loading job description from {args.jd_file}...")
     with open(args.jd_file, 'r', encoding='utf-8') as f:
         jd_text = f.read()
-    
     jd_requirements = parse_jd_requirements(jd_text)
-    print(f"      Parsed requirements: {len(jd_requirements.get('skills', []))} skills, "
-          f"{jd_requirements.get('min_experience', 0)}-{jd_requirements.get('max_experience', 0)} years experience")
-    
+    print(f"      Skills: {len(jd_requirements.get('skills', []))}, "
+          f"Exp: {jd_requirements.get('min_experience', 0)}-{jd_requirements.get('max_experience', 0)} yrs")
+
     # Step 2: Load candidates
     print(f"\n[2/7] Loading candidates from {args.candidates}...")
     candidates = load_candidates_jsonl(args.candidates)
     print(f"      Loaded {len(candidates)} candidates")
-    
-    if len(candidates) == 0:
-        print("Error: No candidates found in JSONL file")
-        sys.exit(1)
-    
-    # Step 2.5: Filter honeypots
-    print(f"\n[2.5/7] Detecting and filtering honeypot candidates...")
+
+    # Step 2.5: Honeypot filter
+    print(f"\n[2.5/7] Detecting honeypots...")
     honeypot_detector = HoneypotDetector(strict_mode=False)
     valid_candidates, honeypots = honeypot_detector.filter_honeypots(
         [c['candidate_data'] for c in candidates]
     )
-    
-    print(f"      Found {len(honeypots)} honeypot candidates")
-    print(f"      Kept {len(valid_candidates)} valid candidates")
-    
-    if args.verbose and honeypots:
-        print(f"\n      Sample honeypot detection:")
-        for i, honey in enumerate(honeypots[:3]):
-            cid = honey.get('candidate_id') or honey.get('profile', {}).get('anonymized_name', 'Unknown')
-            print(f"        {i+1}. {cid}")
-            for reason in honey.get('honeypot_reasons', [])[:2]:
-                print(f"           - {reason}")
-    
-    # Filter candidates list to only valid ones
-    valid_candidate_ids = {c.get('candidate_id') for c in valid_candidates}
-    candidates = [c for c in candidates if c['candidate_id'] in valid_candidate_ids]
-    
-    # Step 3: Prepare temp files for pipeline
-    print(f"\n[3/7] Preparing candidates for screening pipeline...")
+    print(f"      Removed {len(honeypots)} honeypots, kept {len(valid_candidates)} valid")
+    valid_ids = {c.get('candidate_id') for c in valid_candidates}
+    candidates = [c for c in candidates if c['candidate_id'] in valid_ids]
+
+    # Step 2.8: TF-IDF pre-filter to top 2000
+    PRE_FILTER_K = 2000
+    if len(candidates) > PRE_FILTER_K:
+        print(f"\n[2.8/7] TF-IDF pre-filtering {len(candidates)} -> {PRE_FILTER_K}...")
+        candidates = prefilter_candidates_tfidf(candidates, jd_text, PRE_FILTER_K)
+        print(f"      Done - {len(candidates)} candidates going to pipeline")
+
+    # Build lookup before pipeline
+    candidate_lookup = {c['candidate_id']: c['candidate_data'] for c in candidates}
+
+    # Step 3: Save temp files
+    print(f"\n[3/7] Saving {len(candidates)} resumes to one JSONL batch file...")
     temp_dir = save_temp_resumes(candidates, args.temp_dir)
-    print(f"      Saved {len(candidates)} resume files to {temp_dir}")
-    
-    # Step 4: Run screening pipeline
-    print(f"\n[4/7] Running screening pipeline (tiered={args.tiered})...")
-    print(f"      This may take a few minutes for large datasets...")
-    
+
+    # Step 4: Run pipeline
+    print(f"\n[4/7] Running screening pipeline...")
     pipeline = BatchPipeline()
-    
-    if args.tiered:
-        result = pipeline.run_tiered(
-            resume_dir=temp_dir,
-            job_description=jd_text,
-            top_k=args.top_k,
-            num_workers=args.workers
-        )
-    else:
-        result = pipeline.run(
-            resume_dir=temp_dir,
-            job_description=jd_text,
-            top_k=args.top_k,
-            num_workers=args.workers
-        )
-    
-    print(f"      ✓ Processed {result['total_resumes_processed']} resumes in {result['elapsed_seconds']:.1f}s")
-    print(f"      ✓ Ranked top {len(result['candidates'])} candidates")
-    
-    # Step 4.5: Apply behavioral signals
+    result = pipeline.run_tiered(
+        resume_dir=temp_dir,
+        job_description=jd_text,
+        top_k=args.top_k,
+        num_workers=args.workers
+    )
+    print(f"      OK {result['total_resumes_processed']} resumes in {result['elapsed_seconds']:.1f}s")
+    print(f"      OK Top {len(result['candidates'])} ranked")
+
+    # Step 4.5: Behavioral signals
     print(f"\n[4.5/7] Applying behavioral signals...")
-    candidates_with_behavioral = []
-    
-    for ranked_candidate in result['candidates']:
-        cid = ranked_candidate['resume_id']
+    for rc in result['candidates']:
+        cid = rc['resume_id'].replace('.txt', '')
         full_data = candidate_lookup.get(cid, {})
-        redrob_signals = full_data.get('redrob_signals', {})
-        
-        # Apply behavioral multiplier
-        behavioral_result = apply_behavioral_multiplier(
-            base_score=ranked_candidate['overall_score'],
-            redrob_signals=redrob_signals,
+        beh = apply_behavioral_multiplier(
+            base_score=rc['overall_score'],
+            redrob_signals=full_data.get('redrob_signals', {}),
             jd_requirements=jd_requirements
         )
-        
-        # Update score
-        ranked_candidate['base_score'] = ranked_candidate['overall_score']
-        ranked_candidate['overall_score'] = behavioral_result['final_score']
-        ranked_candidate['behavioral_multiplier'] = behavioral_result['behavioral_multiplier']
-        ranked_candidate['behavioral_penalties'] = behavioral_result['penalties']
-        ranked_candidate['behavioral_boosts'] = behavioral_result['boosts']
-        
-        candidates_with_behavioral.append(ranked_candidate)
-    
-    # Re-sort by new scores and re-rank
-    candidates_with_behavioral.sort(key=lambda x: x['overall_score'], reverse=True)
-    for new_rank, candidate in enumerate(candidates_with_behavioral, 1):
-        candidate['rank'] = new_rank
-    
-    # Update result
-    result['candidates'] = candidates_with_behavioral
-    
-    print(f"      ✓ Applied behavioral multipliers (range: "
-          f"{min(c['behavioral_multiplier'] for c in result['candidates']):.2f} - "
-          f"{max(c['behavioral_multiplier'] for c in result['candidates']):.2f})")
-    
+        rc['base_score']            = rc['overall_score']
+        rc['overall_score']         = beh['final_score']
+        rc['behavioral_multiplier'] = beh['behavioral_multiplier']
+
+    result['candidates'].sort(key=lambda x: x['overall_score'], reverse=True)
+    for i, rc in enumerate(result['candidates'], 1):
+        rc['rank'] = i
+    print(f"      OK Done")
+
     # Step 5: Generate reasoning
-    print(f"\n[5/7] Generating reasoning for each candidate...")
-    reasoning_gen = ReasoningGenerator(jd_requirements)
-    
-    # Attach full candidate data to results
-    candidate_lookup = {c['candidate_id']: c['candidate_data'] for c in candidates}
-    
-    for ranked_candidate in result['candidates']:
-        cid = ranked_candidate['resume_id']
-        
-        # Get full candidate data
+    print(f"\n[5/7] Generating reasoning...")
+    for rc in result['candidates']:
+        cid = rc['resume_id'].replace('.txt', '')
         full_data = candidate_lookup.get(cid, {})
-        
-        # Generate reasoning
-        reasoning = reasoning_gen.generate(
-            candidate=full_data,
-            rank=ranked_candidate['rank'],
-            scores=ranked_candidate['all_scores']
-        )
-        
-        ranked_candidate['reasoning'] = reasoning
-        ranked_candidate['candidate_data'] = full_data  # Attach for CSV writer
-    
-    print(f"      ✓ Generated reasoning for {len(result['candidates'])} candidates")
-    
-    # Show sample
-    if args.verbose and len(result['candidates']) > 0:
-        print(f"\n      Sample reasoning (Rank 1):")
-        sample = result['candidates'][0]
-        print(f"      {sample['resume_id']}: \"{sample['reasoning']}\"")
-    
-    # Step 6: Validate honeypot rate in top 100
+        rc['reasoning']      = build_reasoning(rc, full_data, rc.get('all_scores', {}))
+        rc['candidate_data'] = full_data
+        rc['resume_id']      = cid  # strip .txt permanently
+
+    if args.verbose:
+        print(f"\n      Sample (Rank 1): {result['candidates'][0]['reasoning']}")
+
+    # Step 6: Honeypot rate check
     print(f"\n[6/7] Checking honeypot rate in top 100...")
-    top_100_data = [
-        candidate_lookup.get(c['resume_id'], {}) 
-        for c in result['candidates'][:100]
-    ]
-    
-    honeypot_check = honeypot_detector.calculate_honeypot_rate(top_100_data)
-    
-    print(f"      Honeypot rate: {honeypot_check['honeypot_rate']:.1f}% "
-          f"({honeypot_check['honeypots_detected']}/100)")
-    
-    if honeypot_check['passes_threshold']:
-        print(f"      ✓ PASSES threshold (≤10%)")
-    else:
-        print(f"      ✗ FAILS threshold (>10%) - Submission will be disqualified!")
-        print(f"      Consider adjusting your ranking algorithm.")
-    
-    if args.verbose and honeypot_check['honeypot_list']:
-        print(f"\n      Detected honeypots in top 100:")
-        for hp in honeypot_check['honeypot_list'][:3]:
-            print(f"        - {hp['candidate_id']}")
-            for reason in hp['reasons'][:2]:
-                print(f"          • {reason}")
-    
-    # Step 7: Write CSV
-    print(f"\n[7/7] Writing submission CSV to {args.output}...")
-    
+    top_100_data = [candidate_lookup.get(c['resume_id'], {}) for c in result['candidates'][:100]]
+    hcheck = honeypot_detector.calculate_honeypot_rate(top_100_data)
+    status = "PASSES" if hcheck['passes_threshold'] else "FAILS"
+    print(f"      {status} - {hcheck['honeypot_rate']:.1f}% honeypots in top 100")
+
+    # Step 7: Write CSV / Excel
+    print(f"\n[7/7] Writing CSV to {args.output}...")
     try:
         write_result = write_submission_csv(
             candidates=result['candidates'],
             output_path=args.output,
             validate_only=args.validate_only
         )
-        
-        if args.validate_only:
-            if write_result['valid']:
-                print(f"      ✓ Validation PASSED")
-            else:
-                print(f"      ✗ Validation FAILED:")
-                for error in write_result['validation']['errors']:
-                    print(f"        - {error}")
-                sys.exit(1)
-        else:
-            print(f"      ✓ Written {write_result['rows_written']} rows to {write_result['output_path']}")
-            
-            # Show validation warnings
-            if write_result['validation']['warnings']:
-                print(f"\n      Warnings:")
-                for warning in write_result['validation']['warnings']:
-                    print(f"        ⚠ {warning}")
-            
-            # Show stats
+        if not args.validate_only:
+            print(f"      OK {write_result['rows_written']} rows written")
             stats = write_result['validation']['stats']
-            print(f"\n      Statistics:")
-            print(f"        - Total candidates: {stats['total_candidates']}")
-            print(f"        - Unique ranks: {stats['unique_ranks']}")
-            print(f"        - Score range: {stats['min_score']:.2f} - {stats['max_score']:.2f}")
-            print(f"        - Empty reasoning: {stats['empty_reasoning_count']}")
-    
+            print(f"      Score range: {stats['min_score']:.4f} - {stats['max_score']:.4f}")
+            print(f"      Empty reasoning: {stats['empty_reasoning_count']}")
+            if args.excel_output:
+                xlsx_result = write_submission_xlsx(result['candidates'], args.excel_output)
+                print(f"      OK Excel written: {xlsx_result['output_path']}")
     except Exception as e:
-        print(f"      ✗ Error writing CSV: {e}")
+        print(f"      Error: {e}")
         sys.exit(1)
-    
-    # Cleanup temp files
+
+    # Cleanup
     import shutil
     if os.path.exists(temp_dir) and temp_dir.startswith('./temp'):
         shutil.rmtree(temp_dir)
-        print(f"\n      Cleaned up temporary files in {temp_dir}")
-    
+
     print(f"\n{'='*80}")
-    print("✅ SUBMISSION GENERATION COMPLETE!")
-    print(f"{'='*80}\n")
+    print("DONE!")
+    print(f"{'='*80}")
     print(f"Output: {args.output}")
     print(f"Candidates: {len(result['candidates'])}")
     print(f"Time: {result['elapsed_seconds']:.1f}s")
-    print(f"\nReady to submit! 🚀")
+    print(f"\nReady to submit!")
 
 
 if __name__ == '__main__':

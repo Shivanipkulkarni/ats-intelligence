@@ -11,6 +11,11 @@ from app.services.team_portfolio.scorer import compute_team_portfolio
 from app.services.artifact_complexity.scorer import compute_artifact_complexity
 from app.services.counterfactual.scorer import compute_counterfactual
 
+try:
+    import orjson
+except ImportError:
+    orjson = None
+
 
 DIMENSION_WEIGHTS = {
     "semantic_fit": 0.25,
@@ -25,6 +30,20 @@ DIMENSION_WEIGHTS = {
 }
 
 
+def _loads_json(data: str | bytes):
+    if orjson is not None:
+        return orjson.loads(data)
+    return json.loads(data)
+
+
+def _load_json_file(path: str):
+    if orjson is not None:
+        with open(path, "rb") as f:
+            return orjson.loads(f.read())
+    with open(path, "r", encoding="utf-8-sig") as f:
+        return json.load(f)
+
+
 def load_resumes(resume_dir: str) -> list[dict]:
     jsonl_path = os.path.join(resume_dir, "resumes.jsonl")
     if os.path.exists(jsonl_path):
@@ -34,7 +53,7 @@ def load_resumes(resume_dir: str) -> list[dict]:
                 line = line.strip()
                 if not line:
                     continue
-                data = json.loads(line)
+                data = _loads_json(line)
                 text = data.get("text", data.get("resume_text", data.get("content", "")))
                 records.append({
                     "resume_id": data.get("id", data.get("resume_id", str(len(records)))),
@@ -49,8 +68,7 @@ def load_resumes(resume_dir: str) -> list[dict]:
         ext = os.path.splitext(fname)[1].lower()
 
         if ext == ".json":
-            with open(path, "r", encoding="utf-8-sig") as f:
-                data = json.load(f)
+            data = _load_json_file(path)
             if isinstance(data, dict):
                 text = data.get("text", data.get("resume_text", data.get("content", "")))
                 records.append({
@@ -178,9 +196,9 @@ class BatchPipeline:
         """
         Three-tiered filtering pipeline for efficient large-scale resume screening.
         
-        Tier 1 (200K → 40K): Fast semantic + keyword filtering
-        Tier 2 (40K → 5K): Add medium-cost heuristics
-        Tier 3 (5K → 100): Full deep analysis with all dimensions
+        Tier 1 (200K -> 40K): Fast semantic + keyword filtering
+        Tier 2 (40K -> 5K): Add medium-cost heuristics
+        Tier 3 (5K -> 100): Full deep analysis with all dimensions
         """
         self.cache_dir = cache_dir
         start = time.time()
@@ -197,14 +215,14 @@ class BatchPipeline:
         actual_tier1_size = min(tier1_size, max(int(n * 0.2), top_k))  # At least 20% or top_k
         actual_tier2_size = min(tier2_size, max(int(actual_tier1_size * 0.125), top_k))  # At least 12.5% of tier1 or top_k
         
-        print(f"Tiered filtering enabled: {n} → {actual_tier1_size} → {actual_tier2_size} → {top_k}")
+        print(f"Tiered filtering enabled: {n} -> {actual_tier1_size} -> {actual_tier2_size} -> {top_k}")
 
         if n == 0:
             raise ValueError("No resumes found in directory.")
 
         # ========== TIER 1: Semantic + Keyword Filter (Fast) ==========
         print(f"\n{'='*80}")
-        print(f"TIER 1: Semantic + Keyword filtering ({n} → {tier1_size})")
+        print(f"TIER 1: Semantic + Keyword filtering ({n} -> {tier1_size})")
         print(f"{'='*80}")
         
         tier1_start = time.time()
@@ -245,14 +263,14 @@ class BatchPipeline:
         tier1_shortlist = tier1_candidates[:actual_tier1_size]
         
         tier1_elapsed = time.time() - tier1_start
-        print(f"✓ Tier 1 complete in {tier1_elapsed:.2f}s")
+        print(f"OK Tier 1 complete in {tier1_elapsed:.2f}s")
         print(f"  Top score: {tier1_shortlist[0]['tier1_score']:.2f}")
         print(f"  Cutoff score: {tier1_shortlist[-1]['tier1_score']:.2f}")
         print(f"  Filtered out: {n - actual_tier1_size:,} resumes ({(n - actual_tier1_size) / n * 100:.1f}%)")
 
         # ========== TIER 2: Medium-Cost Heuristics ==========
         print(f"\n{'='*80}")
-        print(f"TIER 2: Adding medium-cost heuristics ({actual_tier1_size:,} → {actual_tier2_size:,})")
+        print(f"TIER 2: Adding medium-cost heuristics ({actual_tier1_size:,} -> {actual_tier2_size:,})")
         print(f"{'='*80}")
         
         tier2_start = time.time()
@@ -284,6 +302,7 @@ class BatchPipeline:
             
             tier2_candidates.append({
                 **candidate,
+                "roles": signals.get("roles"),
                 "narrative_coherence": signals["narrative_coherence_score"],
                 "team_portfolio": signals["team_portfolio_score"],
                 "artifact_complexity": signals["artifact_complexity_score"],
@@ -296,7 +315,7 @@ class BatchPipeline:
         tier2_shortlist = tier2_candidates[:actual_tier2_size]
         
         tier2_elapsed = time.time() - tier2_start
-        print(f"✓ Tier 2 complete in {tier2_elapsed:.2f}s")
+        print(f"OK Tier 2 complete in {tier2_elapsed:.2f}s")
         print(f"  Top score: {tier2_shortlist[0]['tier2_score']:.2f}")
         print(f"  Cutoff score: {tier2_shortlist[-1]['tier2_score']:.2f}")
         print(f"  Average score: {sum(c['tier2_score'] for c in tier2_shortlist) / len(tier2_shortlist):.2f}")
@@ -304,7 +323,7 @@ class BatchPipeline:
 
         # ========== TIER 3: Full Deep Analysis ==========
         print(f"\n{'='*80}")
-        print(f"TIER 3: Full deep analysis ({actual_tier2_size:,} → {top_k})")
+        print(f"TIER 3: Full deep analysis ({actual_tier2_size:,} -> {top_k})")
         print(f"{'='*80}")
         
         tier3_start = time.time()
@@ -364,7 +383,7 @@ class BatchPipeline:
         top_candidates = final_candidates[:top_k]
         
         tier3_elapsed = time.time() - tier3_start
-        print(f"✓ Tier 3 complete in {tier3_elapsed:.2f}s")
+        print(f"OK Tier 3 complete in {tier3_elapsed:.2f}s")
         print(f"  Top score: {top_candidates[0]['overall_score']:.2f}")
         print(f"  Cutoff score: {top_candidates[-1]['overall_score']:.2f}")
         print(f"  Average score: {sum(c['overall_score'] for c in top_candidates) / len(top_candidates):.2f}")
@@ -374,8 +393,10 @@ class BatchPipeline:
         # Bias comparison (using original keyword ranking)
         print(f"\nGenerating bias comparison report...")
         kw_ranked = sorted(
-            [{"resume_id": r["resume_id"], "overall_score": kw_scores_map.get(r["resume_id"], 0)} 
-             for r in records],
+            [
+                {"resume_id": c["resume_id"], "overall_score": c["keyword_match"]}
+                for c in tier2_candidates
+            ],
             key=lambda x: x["overall_score"],
             reverse=True,
         )[:top_k]
@@ -392,12 +413,12 @@ class BatchPipeline:
         print(f"  Tier 2 (Medium Heuristics):   {tier2_elapsed:>6.2f}s  ({tier2_elapsed/total_elapsed*100:>5.1f}%)")
         print(f"  Tier 3 (Deep Analysis):       {tier3_elapsed:>6.2f}s  ({tier3_elapsed/total_elapsed*100:>5.1f}%)")
         print(f"\nProcessing speed: {int(n / total_elapsed):,} resumes/second")
-        print(f"Filtering efficiency: {n:,} → {actual_tier1_size:,} → {actual_tier2_size:,} → {top_k}")
+        print(f"Filtering efficiency: {n:,} -> {actual_tier1_size:,} -> {actual_tier2_size:,} -> {top_k}")
         print(f"Reduction rate: {(1 - top_k/n)*100:.2f}% of candidates filtered out")
         
         if bias and bias.get('summary'):
             bc = bias['summary']
-            print(f"\n📊 Bias Comparison:")
+            print(f"\nBias Comparison:")
             print(f"  Overlap: {bc['overlap_count']}/{top_k} ({bc['overlap_pct']}%)")
             print(f"  LSA-only: {bc['lsa_only_count']} | Keyword-only: {bc['keyword_only_count']}")
 
@@ -553,8 +574,8 @@ class BatchPipeline:
         }
 
 
-def _chunk_records(records: list, num_chunks: int) -> list:
-    chunk_size = max(1, len(records) // num_chunks)
+def _chunk_records(records: list, chunk_size: int) -> list:
+    chunk_size = max(1, chunk_size)
     return [records[i:i + chunk_size] for i in range(0, len(records), chunk_size)]
 
 
@@ -567,7 +588,8 @@ def _run_parallel_heuristic(records: list[dict], num_workers: int) -> list[dict]
             signals_list.append(compute_heuristic_signals(rec["resume_text"]))
         return signals_list
 
-    chunks = _chunk_records(records, num_workers)
+    chunk_size = max(100, len(records) // max(1, num_workers))
+    chunks = _chunk_records(records, chunk_size)
     all_results = [None] * len(records)
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -575,7 +597,7 @@ def _run_parallel_heuristic(records: list[dict], num_workers: int) -> list[dict]
         for future in as_completed(futures):
             chunk_idx = futures[future]
             chunk_results = future.result()
-            start_idx = chunk_idx * max(1, len(records) // num_workers)
+            start_idx = sum(len(chunks[i]) for i in range(chunk_idx))
             for j, result in enumerate(chunk_results):
                 all_results[start_idx + j] = result
 
@@ -597,7 +619,8 @@ def _run_parallel_keyword(records: list[dict], jd_text: str, num_workers: int) -
     for r in records:
         chunk_data.append((r["resume_id"], r["resume_text"], jd_text))
 
-    chunks = _chunk_records(chunk_data, num_workers)
+    chunk_size = max(100, len(chunk_data) // max(1, num_workers))
+    chunks = _chunk_records(chunk_data, chunk_size)
     all_results = [None] * len(records)
 
     with ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -605,7 +628,7 @@ def _run_parallel_keyword(records: list[dict], jd_text: str, num_workers: int) -
         for future in as_completed(futures):
             chunk_idx = futures[future]
             chunk_results = future.result()
-            start_idx = chunk_idx * max(1, len(chunk_data) // num_workers)
+            start_idx = sum(len(chunks[i]) for i in range(chunk_idx))
             for j, result in enumerate(chunk_results):
                 all_results[start_idx + j] = result
 
@@ -615,16 +638,19 @@ def _run_parallel_keyword(records: list[dict], jd_text: str, num_workers: int) -
 def process_chunk_tier2(chunk: list[dict]) -> list[dict]:
     """Process Tier 2 medium-cost heuristics for a chunk of candidates."""
     results = []
+    from app.services.career_trajectory.extractor import parse_roles_from_text
+
     for candidate in chunk:
-        from app.services.career_trajectory.extractor import parse_roles_from_text
-        roles = parse_roles_from_text(candidate["resume_text"])
+        resume_text = candidate["resume_text"]
+        roles = parse_roles_from_text(resume_text)
         
-        narrative = compute_narrative_coherence(candidate["resume_text"], roles)
-        portfolio = compute_team_portfolio(candidate["resume_text"], roles)
-        artifact = compute_artifact_complexity(candidate["resume_text"], roles)
+        narrative = compute_narrative_coherence(resume_text, roles)
+        portfolio = compute_team_portfolio(resume_text, roles)
+        artifact = compute_artifact_complexity(resume_text, roles)
         
         results.append({
             "resume_id": candidate["resume_id"],
+            "roles": roles,
             "narrative_coherence_score": narrative["narrative_coherence_score"],
             "team_portfolio_score": portfolio["team_portfolio_score"],
             "artifact_complexity_score": artifact["artifact_complexity_score"],
@@ -640,12 +666,16 @@ def process_chunk_tier2(chunk: list[dict]) -> list[dict]:
 def process_chunk_tier3(chunk: list[dict]) -> list[dict]:
     """Process Tier 3 deep analysis dimensions for a chunk of candidates."""
     results = []
+    from app.services.career_trajectory.extractor import parse_roles_from_text
+
     for candidate in chunk:
-        from app.services.career_trajectory.extractor import parse_roles_from_text
-        roles = parse_roles_from_text(candidate["resume_text"])
+        resume_text = candidate["resume_text"]
+        roles = candidate.get("roles")
+        if roles is None:
+            roles = parse_roles_from_text(resume_text)
         
-        career = compute_career_trajectory(candidate["resume_text"], roles)
-        counterfactual = compute_counterfactual(candidate["resume_text"], roles)
+        career = compute_career_trajectory(resume_text, roles)
+        counterfactual = compute_counterfactual(resume_text, roles)
         
         results.append({
             "resume_id": candidate["resume_id"],
@@ -673,6 +703,7 @@ def _run_parallel_tier2(candidates: list[dict], num_workers: int) -> list[dict]:
             artifact = compute_artifact_complexity(candidate["resume_text"], roles)
             
             signals_list.append({
+                "roles": roles,
                 "narrative_coherence_score": narrative["narrative_coherence_score"],
                 "team_portfolio_score": portfolio["team_portfolio_score"],
                 "artifact_complexity_score": artifact["artifact_complexity_score"],
@@ -684,7 +715,8 @@ def _run_parallel_tier2(candidates: list[dict], num_workers: int) -> list[dict]:
             })
         return signals_list
 
-    chunks = _chunk_records(candidates, num_workers)
+    chunk_size = max(50, len(candidates) // max(1, num_workers))
+    chunks = _chunk_records(candidates, chunk_size)
     all_results = [None] * len(candidates)
     completed_chunks = 0
     total_chunks = len(chunks)
@@ -695,9 +727,9 @@ def _run_parallel_tier2(candidates: list[dict], num_workers: int) -> list[dict]:
         futures = {executor.submit(process_chunk_tier2, chunk): i for i, chunk in enumerate(chunks)}
         for future in as_completed(futures):
             chunk_idx = futures[future]
+            start_idx = sum(len(chunks[i]) for i in range(chunk_idx))
             try:
                 chunk_results = future.result()
-                start_idx = chunk_idx * max(1, len(candidates) // num_workers)
                 for j, result in enumerate(chunk_results):
                     all_results[start_idx + j] = result
                 completed_chunks += 1
@@ -708,6 +740,7 @@ def _run_parallel_tier2(candidates: list[dict], num_workers: int) -> list[dict]:
                 # Fill with neutral scores for failed chunk
                 for j in range(len(chunks[chunk_idx])):
                     all_results[start_idx + j] = {
+                        "roles": None,
                         "narrative_coherence_score": 65.0,
                         "team_portfolio_score": 65.0,
                         "artifact_complexity_score": 65.0,
@@ -729,7 +762,9 @@ def _run_parallel_tier3(candidates: list[dict], num_workers: int) -> list[dict]:
             if i % 500 == 0 and i > 0:
                 print(f"  Tier 3 progress: {i:,}/{total:,} ({i/total*100:.1f}%)")
             from app.services.career_trajectory.extractor import parse_roles_from_text
-            roles = parse_roles_from_text(candidate["resume_text"])
+            roles = candidate.get("roles")
+            if roles is None:
+                roles = parse_roles_from_text(candidate["resume_text"])
             
             career = compute_career_trajectory(candidate["resume_text"], roles)
             counterfactual = compute_counterfactual(candidate["resume_text"], roles)
@@ -742,7 +777,8 @@ def _run_parallel_tier3(candidates: list[dict], num_workers: int) -> list[dict]:
             })
         return signals_list
 
-    chunks = _chunk_records(candidates, num_workers)
+    chunk_size = max(50, len(candidates) // max(1, num_workers))
+    chunks = _chunk_records(candidates, chunk_size)
     all_results = [None] * len(candidates)
     completed_chunks = 0
     total_chunks = len(chunks)
@@ -753,9 +789,9 @@ def _run_parallel_tier3(candidates: list[dict], num_workers: int) -> list[dict]:
         futures = {executor.submit(process_chunk_tier3, chunk): i for i, chunk in enumerate(chunks)}
         for future in as_completed(futures):
             chunk_idx = futures[future]
+            start_idx = sum(len(chunks[i]) for i in range(chunk_idx))
             try:
                 chunk_results = future.result()
-                start_idx = chunk_idx * max(1, len(candidates) // num_workers)
                 for j, result in enumerate(chunk_results):
                     all_results[start_idx + j] = result
                 completed_chunks += 1
