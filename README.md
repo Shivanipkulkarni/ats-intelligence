@@ -1,366 +1,308 @@
-# 🎯 ATS Intelligence Engine
+# ATS Intelligence Engine
 
-**AI-powered resume screening** that ranks candidates using **10 scoring dimensions** beyond keyword matching.
+AI-powered resume screening system for ranking candidates against a job description. The project is designed for hackathon-style candidate datasets and produces ranked CSV and Excel outputs with candidate-specific reasoning.
 
-- ⚡ Processes **200K resumes in ~2 minutes** (with 3-tier optimization)
-- 🧠 Semantic understanding using TF-IDF + LSA
-- 📊 Career trajectory, skill portfolio, and project complexity analysis
-- 🚫 **No GPU, no internet, no deep learning** — runs on standard hardware
+The engine uses fast, local scoring methods such as TF-IDF, LSA, rule-based career analysis, behavioral signals, honeypot detection, and tiered filtering. It does not require a GPU, external APIs, or internet access during screening.
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+## Key Features
 
----
+- Streamlit web app for uploading candidate datasets and job descriptions.
+- CLI submission generator for repeatable batch runs.
+- Supports JSON and JSONL candidate files.
+- Supports text, DOCX, and PDF job descriptions in the Streamlit app.
+- Generates top candidate rankings with score and reasoning.
+- Exports CSV and Excel files.
+- Filters suspicious or impossible candidate profiles using honeypot detection.
+- Uses behavioral signals such as response rate, notice period, profile completeness, and relocation willingness.
+- Optimized path for large datasets using fast prefiltering and tiered scoring.
 
-## 🚀 Quick Start
+## Project Structure
 
-### 1. Install Dependencies
+```text
+ats-intelligence/
++-- app_streamlit.py                  # Streamlit web application
++-- generate_submission.py            # CLI generator for CSV/XLSX submissions
++-- requirements.txt                  # Python dependencies
++-- runtime.txt                       # Python runtime for Streamlit Cloud
++-- .streamlit/
+|   +-- config.toml                   # Streamlit configuration
++-- app/
+|   +-- core/
+|   +-- models/
+|   +-- services/
+|       +-- batch/
+|       |   +-- pipeline.py           # Main ranking pipeline
+|       |   +-- semantic_engine.py    # TF-IDF + LSA semantic scoring
+|       |   +-- screener.py
+|       +-- behavioral_signals/
+|       +-- bias_mirror/
+|       +-- career_trajectory/
+|       +-- narrative_coherence/
+|       +-- team_portfolio/
+|       +-- artifact_complexity/
+|       +-- counterfactual/
+|       +-- csv_writer.py
+|       +-- honeypot_detector.py
+|       +-- reasoning_generator.py
++-- docs/
+```
+
+## Installation
+
+Use Python 3.11 for best compatibility with Streamlit Community Cloud and the pinned dependencies.
 
 ```bash
 git clone <repository-url>
-cd ats-intelligence
+cd ats-intelligence-main
+python -m venv .venv
+```
+
+Activate the virtual environment.
+
+Windows:
+
+```bash
+.venv\Scripts\activate
+```
+
+macOS or Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Prepare Input Files
-
-**Create `resumes/` folder** with resume files in any format:
+## Run the Streamlit App Locally
 
 ```bash
-# Option A: Single JSONL file (recommended for large datasets)
-# File: resumes/resumes.jsonl
-{"id": "001", "resume_text": "Senior Python Engineer with 8 years..."}
-{"id": "002", "resume_text": "Full Stack Developer with React..."}
-
-# Option B: Individual text files
-# Files: resumes/001.txt, resumes/002.txt, etc.
-Senior Python Engineer with 8 years of experience...
-
-# Option C: Individual JSON files
-# Files: resumes/001.json, resumes/002.json, etc.
-{"id": "001", "resume_text": "Senior Engineer..."}
+streamlit run app_streamlit.py
 ```
 
-**Create job description file** `job_description.txt`:
+Open the local URL shown in the terminal, usually:
 
+```text
+http://localhost:8501
 ```
-Senior Python Engineer
+
+## Streamlit App Usage
+
+1. Upload a candidate file in JSON or JSONL format.
+2. Upload a job description file or paste the job description text.
+3. Select the number of top candidates to rank.
+4. Click the run button.
+5. Download the generated CSV or Excel output.
+
+## Candidate Input Format
+
+JSONL is recommended for large datasets because it streams cleanly and is easier to process at scale.
+
+Each line should contain one candidate record:
+
+```json
+{"candidate_id":"CAND_000001","profile":{"current_title":"Senior AI Engineer","current_company":"ExampleTech","current_industry":"Technology","location":"Pune","years_of_experience":7},"career_history":[{"title":"Senior AI Engineer","company":"ExampleTech","description":"Built retrieval and ranking systems for production search.","duration_months":36}],"skills":[{"name":"Python","proficiency":"expert","duration_months":72},{"name":"Machine Learning","proficiency":"advanced","duration_months":60}],"redrob_signals":{"recruiter_response_rate":0.72,"notice_period_days":30,"open_to_work_flag":true,"willing_to_relocate":true,"profile_completeness_score":91,"github_activity_score":78}}
+```
+
+Required fields:
+
+- `candidate_id`
+- `profile`
+- `career_history`
+- `skills`
+
+Recommended fields:
+
+- `redrob_signals`
+- `education`
+- role descriptions in `career_history`
+- skill proficiency and duration
+
+## Job Description Input
+
+The job description can be provided as:
+
+- pasted text
+- `.txt`
+- `.docx`
+- `.pdf`
+
+Example:
+
+```text
+Senior AI Engineer
 
 Requirements:
-- 5+ years software engineering
-- Python, distributed systems, AWS
-- Team leadership experience
+- 5-9 years of experience
+- Strong Python, machine learning, embeddings, retrieval, vector database, NLP, and LLM experience
+- Experience with ranking, search, APIs, monitoring, and scalable backend systems
+- Preferred locations: Pune, Noida, Bangalore, Hyderabad, Mumbai, or Delhi
 ```
 
-### 3. Run Screening
+## CLI Usage
 
-**For small datasets (<50K resumes):**
-```bash
-python run_screening.py \
-  --resume-dir ./resumes \
-  --jd-file ./job_description.txt \
-  --top-k 100
-```
+Use the CLI when you want repeatable local runs or direct file output.
 
-**For large datasets (50K+ resumes) with 3-tier optimization:**
 ```bash
-python run_screening.py \
-  --resume-dir ./resumes \
-  --jd-file ./job_description.txt \
-  --top-k 100 \
-  --tiered \
+python generate_submission.py ^
+  --candidates path\to\candidates.jsonl ^
+  --jd path\to\job_description.txt ^
+  --output ranking_results.csv ^
+  --excel-output ranking_results.xlsx ^
   --workers 8
 ```
 
-### 4. View Results
-
-Results print to console or save to JSON:
+On macOS or Linux:
 
 ```bash
-python run_screening.py \
-  --resume-dir ./resumes \
-  --jd-file ./job_description.txt \
-  --output results.json
+python generate_submission.py \
+  --candidates path/to/candidates.jsonl \
+  --jd path/to/job_description.txt \
+  --output ranking_results.csv \
+  --excel-output ranking_results.xlsx \
+  --workers 8
 ```
 
-**Output format:**
-```json
-{
-  "total_resumes_processed": 1000,
-  "elapsed_seconds": 45.23,
-  "candidates": [
-    {
-      "rank": 1,
-      "resume_id": "candidate_042",
-      "overall_score": 87.23,
-      "all_scores": {
-        "semantic_fit": 92.1,
-        "career_growth": 78.5,
-        "narrative_coherence": 82.0,
-        "team_portfolio": 74.2,
-        "artifact_complexity": 88.0
-      },
-      "reasons": [
-        "Strong semantic alignment",
-        "Career shows upward trajectory"
-      ]
-    }
-  ]
-}
+## Output Format
+
+The CSV and Excel files use the hackathon submission format:
+
+```text
+candidate_id,rank,score,reasoning
 ```
 
----
+Example:
 
-## 🎯 10 Scoring Dimensions
-
-| Dimension | Weight | What It Measures |
-|-----------|--------|------------------|
-| **Semantic Fit** | 25% | Resume-JD meaning similarity (beyond keywords) |
-| **Career Growth** | 15% | Promotion velocity, leadership signals |
-| **Narrative Coherence** | 10% | Title vs responsibility alignment |
-| **Team Portfolio** | 10% | Skill breadth (T-shaped vs specialist) |
-| **Artifact Complexity** | 10% | Project difficulty (distributed systems, scale, ML) |
-| **Skill Currency** | 10% | Skill recency and relevance |
-| **Resilience** | 10% | Career gap handling and pivots |
-| **Company Context** | 5% | Startup vs enterprise experience |
-| **Counterfactual** | 5% | Outperformance vs expected trajectory |
-| **Keyword Match** | 0%* | Traditional keyword overlap (for bias analysis) |
-
-*Keyword match computed but not included in final score — used for bias comparison
-
----
-
-## ⚡ 3-Tier Filtering (Performance Optimization)
-
-For large datasets (50K+), use `--tiered` to enable progressive filtering:
-
-```
-200K resumes
-    ↓
-TIER 1: Semantic + Keyword (70s)
-    ↓ filters to 40K
-TIER 2: + Medium Heuristics (20s)
-    ↓ filters to 5K
-TIER 3: + Deep Analysis (3s)
-    ↓ Top 100
+```csv
+candidate_id,rank,score,reasoning
+CAND_000123,1,0.8421,"7.0 yrs as Senior AI Engineer at ExampleTech; matched skills: Python (expert, 6y), Machine Learning (advanced, 5y); short notice period (30 days)."
 ```
 
-**Performance**: Reduces processing time from **5 min → 1.5 min** (3x faster)
+## Scoring Dimensions
 
-**When to use:**
-- ✅ Use `--tiered` for 50K+ resumes
-- ❌ Skip for <5K resumes (overhead not worth it)
+| Dimension | Purpose |
+| --- | --- |
+| Semantic Fit | Measures resume-to-JD meaning similarity using TF-IDF and LSA. |
+| Career Growth | Evaluates progression, seniority, and career movement. |
+| Company Context | Adds context from company type and background. |
+| Skill Currency | Rewards relevant and current skills. |
+| Resilience | Looks at gaps, pivots, and career stability. |
+| Narrative Coherence | Checks whether titles, responsibilities, and experience align. |
+| Team Portfolio | Measures breadth of skill portfolio. |
+| Artifact Complexity | Detects evidence of complex projects and systems. |
+| Counterfactual | Compares candidate trajectory against expected patterns. |
+| Behavioral Signals | Applies multiplier based on availability and engagement signals. |
 
----
+## Performance Design
 
-## 🛠️ Command Options
+The app is optimized for large candidate files using:
+
+- TF-IDF prefiltering before expensive scoring.
+- A single temporary `resumes.jsonl` file instead of thousands of small text files.
+- Tiered scoring that applies heavier analysis only to shortlisted candidates.
+- Parallel workers for medium and deep analysis stages.
+- Optional `orjson` for faster JSON parsing.
+
+For large datasets, the expected flow is:
+
+```text
+Full dataset
+-> Fast TF-IDF prefilter
+-> Tier 1 semantic scoring
+-> Tier 2 medium-cost heuristics
+-> Tier 3 deep analysis
+-> Top ranked candidates
+```
+
+## Streamlit Community Cloud Deployment
+
+1. Push the repository to GitHub.
+2. Ensure these files are present at the repository root:
+   - `app_streamlit.py`
+   - `requirements.txt`
+   - `runtime.txt`
+   - `.streamlit/config.toml`
+   - `app/`
+3. In Streamlit Community Cloud, create a new app.
+4. Select the repository and branch.
+5. Set the main file path to:
+
+```text
+app_streamlit.py
+```
+
+6. Deploy the app.
+
+The included `runtime.txt` pins Python 3.11:
+
+```text
+python-3.11
+```
+
+## Streamlit Cloud Troubleshooting
+
+### App fails while installing dependencies
+
+Use the pinned `requirements.txt` included in this repository. It pins versions with stable wheels for Python 3.11.
+
+### App cannot import local modules
+
+Confirm that `app_streamlit.py` is at the repository root and the `app/` directory is also committed.
+
+### Upload fails for large files
+
+Check `.streamlit/config.toml`:
+
+```toml
+[server]
+maxUploadSize = 500
+```
+
+If your dataset is larger than 500 MB, reduce the dataset size, split it, or increase the limit if your deployment environment allows it.
+
+### App runs locally but crashes on Cloud
+
+Check the Streamlit Cloud logs for the first traceback. Common causes are:
+
+- missing files not committed to GitHub
+- incorrect main file path
+- dependency installation failure
+- Python version mismatch
+- file upload larger than the configured limit
+- memory pressure from very large datasets
+
+## Local Testing
+
+Run syntax checks:
 
 ```bash
-python run_screening.py \
-  --resume-dir <path>           # Directory with resume files (required)
-  --jd <text>                   # Inline job description
-  --jd-file <path>              # Job description from file (one or the other)
-  --top-k <N>                   # Number of candidates to return (default: 100)
-  --output <path>               # Save results to JSON file
-  --tiered                      # Enable 3-tier filtering (for 50K+)
-  --workers <N>                 # Parallel workers (default: CPU count)
-  --tier1-size <N>              # Tier 1 cutoff (default: 40000)
-  --tier2-size <N>              # Tier 2 cutoff (default: 5000)
-  --cache-dir <path>            # Cache ML model for faster re-runs
-  --from-cache                  # Skip model training, use cached
-  --weights <json>              # Custom dimension weights
+python -m py_compile app_streamlit.py generate_submission.py app/services/batch/pipeline.py app/services/reasoning_generator.py
 ```
 
-### Common Use Cases
-
-**Save results to file:**
-```bash
-python run_screening.py \
-  --resume-dir ./resumes \
-  --jd-file ./jd.txt \
-  --output results.json
-```
-
-**Custom weights (e.g., emphasize leadership for tech lead role):**
-```bash
-python run_screening.py \
-  --resume-dir ./resumes \
-  --jd-file ./jd.txt \
-  --weights '{"semantic_fit":0.3,"career_growth":0.25,"team_portfolio":0.20}'
-```
-
-**Cache model for multiple JD screenings on same resume pool:**
-```bash
-# First run - builds and caches model
-python run_screening.py --resume-dir ./resumes --jd-file ./jd1.txt --cache-dir ./cache
-
-# Subsequent runs - reuses cached model (much faster!)
-python run_screening.py --resume-dir ./resumes --jd-file ./jd2.txt --cache-dir ./cache --from-cache
-```
-
-**Process large dataset with all CPU cores:**
-```bash
-python run_screening.py \
-  --resume-dir ./resumes \
-  --jd-file ./jd.txt \
-  --tiered \
-  --workers 16
-```
-
----
-
-## 📈 Performance Benchmarks
-
-**Hardware**: 16GB RAM, 8-core CPU (no GPU)
-
-| Resumes | Mode | Time | Speed |
-|---------|------|------|-------|
-| 500 | Standard | 45s | 11/sec |
-| 5,000 | Standard | 250s | 20/sec |
-| 5,000 | Tiered | 180s | 28/sec |
-| 50,000 | Standard | 2,100s | 24/sec |
-| 50,000 | Tiered | 900s | **56/sec** |
-| 200,000 | Standard | 8,400s | 24/sec |
-| 200,000 | Tiered | 2,700s | **74/sec** |
-
-*Note: Tiering has overhead — use only for 50K+ resumes*
-
----
-
-## 🏗️ How It Works
-
-### Standard Pipeline
-All resumes processed through 10 scoring dimensions using TF-IDF + LSA for semantic understanding, regex-based heuristics for career analysis, and weighted aggregation for final ranking.
-
-### Tiered Pipeline (with `--tiered` flag)
-
-**Tier 1** (Fast vectorized ops):
-- Semantic similarity (TF-IDF + LSA)
-- Keyword matching
-- Score: `0.7 × semantic + 0.3 × keyword`
-- Filters to top 40K
-
-**Tier 2** (Medium-cost heuristics):
-- Narrative coherence (title/responsibility alignment)
-- Team portfolio (skill domain breadth)
-- Artifact complexity (project difficulty signals)
-- Filters to top 5K
-
-**Tier 3** (Expensive deep analysis):
-- Career trajectory (6-dimension analysis)
-- Counterfactual (career path simulation)
-- All 10 dimensions combined
-- Returns top N candidates
-
----
-
-## 📁 Project Structure
-
-```
-ats-intelligence/
-├── run_screening.py             # CLI entry point
-├── requirements.txt
-├── README.md
-├── GETTING_STARTED.md          # Detailed setup guide
-├── UI_DEVELOPMENT_SPEC.md      # Full-stack UI specification
-│
-├── app/
-│   ├── core/
-│   │   └── config.py           # Configuration
-│   ├── models/
-│   │   └── schemas.py          # Data schemas
-│   └── services/
-│       ├── batch/
-│       │   ├── pipeline.py              # Main orchestrator (tiered + standard)
-│       │   ├── semantic_engine.py       # TF-IDF + LSA
-│       │   └── screener.py              # Cache-based screening
-│       ├── career_trajectory/           # Career growth analysis
-│       ├── narrative_coherence/         # Story consistency
-│       ├── team_portfolio/              # Skill breadth
-│       ├── artifact_complexity/         # Project difficulty
-│       ├── counterfactual/              # Career simulation
-│       ├── bias_mirror/                 # Keyword matching + bias analysis
-│       └── [other services]/
-│
-└── tests/
-    ├── test_tiers_quick.py
-    └── test_full_pipeline.py
-```
-
----
-
-## 🧪 Testing
-
-Verify installation with the test suite:
+Run a quick CSV generation test:
 
 ```bash
-# Quick tier test (1000 resumes)
+python test_csv_generation.py
+```
+
+Run pipeline tests:
+
+```bash
 python test_tiers_quick.py
-
-# Full pipeline test (500 resumes)
 python test_full_pipeline.py
 ```
 
-Expected output:
-```
-🎉 ALL TESTS PASSED!
-Tier 1 and Tier 2 are working correctly!
-```
+## Notes and Limitations
 
----
+- This tool is intended for screening support, not final hiring decisions.
+- Scores should be reviewed with human judgment.
+- Candidate data is processed locally inside the app runtime.
+- No external AI API is required.
+- PDF job descriptions are supported, but candidate resumes should be uploaded as structured JSON or JSONL.
 
-## 🚀 Building a Web UI
+## License
 
-See **[UI_DEVELOPMENT_SPEC.md](UI_DEVELOPMENT_SPEC.md)** for complete specification to build a React + FastAPI web interface with:
-- REST + WebSocket API specification
-- PostgreSQL database schema
-- React + Tailwind component structure
-- Docker Compose setup
-- 5-week development roadmap
-
----
-
-## 💡 Use Cases
-
-- **Recruiting agencies**: Screen thousands of resumes efficiently
-- **HR departments**: Initial candidate filtering for high-volume roles
-- **Talent acquisition**: Find hidden talent beyond keyword matches
-- **Research**: Study hiring bias and resume screening patterns
-
----
-
-## 📚 Documentation for Team
-
-- **[TEAM_SETUP_GUIDE.md](TEAM_SETUP_GUIDE.md)** - 🚀 **START HERE** - Complete team onboarding guide
-- **[GETTING_STARTED.md](GETTING_STARTED.md)** - Detailed CLI usage and examples
-- **[UI_DEVELOPMENT_SPEC.md](UI_DEVELOPMENT_SPEC.md)** - Full-stack UI development specification
-
----
-
-## ⚠️ Important Notes
-
-- **Privacy**: All processing is offline — no data sent to external services
-- **Bias**: System includes bias comparison to highlight differences from keyword matching
-- **Accuracy**: Best used as a filtering tool, not final decision maker
-- **PDF Support**: Not included (extract text first using any PDF parser)
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Areas for improvement:
-- Additional scoring dimensions
-- PDF resume parsing
-- ML-based scoring models
-- Cloud deployment guides
-- Performance optimizations
-
----
-
-## 📄 License
-
-MIT License - see LICENSE file for details
-
----
-
-**Built with Python, scikit-learn, NumPy, and ❤️**
+MIT License. See `LICENSE` for details.
