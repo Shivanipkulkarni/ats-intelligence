@@ -1,9 +1,15 @@
+"""
+ATS Intelligence Engine - Sandbox Demo
+"""
+
 import streamlit as st
 import tempfile
 import os
 import shutil
 import sys
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 st.set_page_config(
     page_title="ATS Intelligence",
     page_icon="⚡",
@@ -111,6 +117,8 @@ st.markdown("""
     </div>
 </div>
 """, unsafe_allow_html=True)
+
+# ── Inputs ────────────────────────────────────────────────────────────────────
 col1, col2 = st.columns([1, 1], gap="large")
 
 with col1:
@@ -141,8 +149,9 @@ with col2:
     )
 
 st.markdown("<hr class='divider'>", unsafe_allow_html=True)
-run_btn = st.button(" Run Ranking", use_container_width=True)
+run_btn = st.button("⚡  Run Ranking", use_container_width=True)
 
+# ── Pipeline ──────────────────────────────────────────────────────────────────
 if run_btn:
     import time
     wall_start = time.time()
@@ -191,7 +200,7 @@ if run_btn:
         from app.services.honeypot_detector import HoneypotDetector
 
         # 1 — load
-        status.info("Loading candidates…")
+        status.info("📂  Loading candidates…")
         progress.progress(8)
         import json as _json
         raw_text = uploaded_file.getvalue().decode("utf-8", errors="ignore").strip()
@@ -214,10 +223,10 @@ if run_btn:
             candidates = candidates[:100000]
             st.warning("Truncated to first 100,000 candidates.")
 
-        st.success(f" Loaded **{len(candidates)}** candidates")
+        st.success(f"✅ Loaded **{len(candidates)}** candidates")
 
         # 2 — honeypots
-        status.info(" Detecting honeypots…")
+        status.info("🍯  Detecting honeypots…")
         progress.progress(20)
         detector = HoneypotDetector(strict_mode=False)
         valid_data, honeypots = detector.filter_honeypots([c["candidate_data"] for c in candidates])
@@ -231,7 +240,7 @@ if run_btn:
             candidates = prefilter_candidates_tfidf(candidates, final_jd, PRE_FILTER_K)
 
         # 3 — pipeline
-        status.info(" Running screening pipeline…")
+        status.info("⚙️  Running screening pipeline…")
         progress.progress(35)
         temp_dir = tempfile.mkdtemp()
         save_temp_resumes(candidates, temp_dir)
@@ -246,7 +255,7 @@ if run_btn:
         candidate_lookup = {c["candidate_id"]: c["candidate_data"] for c in candidates}
 
         # 4 — behavioral signals
-        status.info("Applying behavioral signals…")
+        status.info("📊  Applying behavioral signals…")
         progress.progress(60)
         jd_requirements = parse_jd_requirements(final_jd)
 
@@ -267,7 +276,7 @@ if run_btn:
             rc["resume_id"] = rc["resume_id"].replace(".txt", "")
 
         # 5 — reasoning
-        status.info("Generating reasoning…")
+        status.info("💬  Generating reasoning…")
         progress.progress(80)
         reasoning_gen = ReasoningGenerator(jd_requirements)
         for rc in result["candidates"]:
@@ -359,12 +368,11 @@ if run_btn:
                 cell.alignment = Alignment(horizontal="center")
             for rc in result["candidates"]:
                 cid       = rc.get("resume_id", "")
-                full_data = full_data_lookup.get(cid, {})
                 ws.append([
                     cid,
                     rc.get("rank"),
                     round(rc.get("overall_score", 0) / 100, 4),
-                    build_excel_reasoning(rc, full_data),
+                    rc.get("reasoning", ""),
                 ])
             ws.column_dimensions["A"].width = 18
             ws.column_dimensions["B"].width = 8
@@ -383,19 +391,19 @@ if run_btn:
         # ── Downloads ─────────────────────────────────────────────────────────
         col_csv, col_xl = st.columns(2)
         with col_csv:
-            st.download_button("Download CSV", data=csv_data,
+            st.download_button("📥  Download CSV", data=csv_data,
                 file_name="ranking_results.csv", mime="text/csv",
                 use_container_width=True)
         with col_xl:
             if excel_ok:
-                st.download_button("Download Excel", data=excel_data,
+                st.download_button("📊  Download Excel", data=excel_data,
                     file_name="ranking_results.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     use_container_width=True)
 
         # ── Candidate cards ───────────────────────────────────────────────────
         st.markdown("<hr class='divider'>", unsafe_allow_html=True)
-        st.markdown(f"#### Top {len(result['candidates'])} Candidates")
+        st.markdown(f"#### 🏆 Top {len(result['candidates'])} Candidates")
 
         SKIP_DIMS = {"resilience", "narrative_coherence"}
         for rc in result["candidates"]:

@@ -1,4 +1,4 @@
-
+#!/usr/bin/env python3
 """
 Hackathon Submission Generator
 
@@ -162,48 +162,12 @@ def write_submission_xlsx(candidates: list[dict], output_path: str) -> dict:
 
 
 def build_reasoning(rc: dict, full_data: dict, scores: dict) -> str:
-    """Build 1-2 line honest reasoning referencing actual profile facts."""
-    profile  = full_data.get('profile', {})
-    skills   = full_data.get('skills', [])
-    career   = full_data.get('career_history', [])
-
-    yoe      = profile.get('years_of_experience', 0)
-    title    = profile.get('current_title', '')
-    company  = profile.get('current_company', '')
-    industry = profile.get('current_industry', '')
-
-    # Top advanced/expert skills
-    prof_order = {'expert': 4, 'advanced': 3, 'intermediate': 2, 'beginner': 1}
-    top_skills = sorted(skills, key=lambda x: prof_order.get(x.get('proficiency', ''), 0), reverse=True)
-    adv = [s['name'] for s in top_skills if s.get('proficiency') in ('expert', 'advanced')][:3]
-    mid = [s['name'] for s in top_skills if s.get('proficiency') == 'intermediate'][:2]
-
-    sem   = scores.get('semantic_fit', 0)
-    cgrow = scores.get('career_growth', 0)
-    rank  = rc.get('rank', 0)
-    overall = rc.get('overall_score', 0)
-
-    # Line 1: profile summary
-    skill_str = ', '.join(adv) if adv else ', '.join(mid) if mid else 'general skills'
-    line1 = f"{yoe:.0f} yrs exp as {title} at {company} ({industry}); strong in {skill_str}."
-
-    # Line 2: honest fit assessment with concerns
-    concerns = []
-    strengths = []
-    if sem > 75:   strengths.append("strong JD alignment")
-    elif sem > 50: strengths.append("moderate JD fit")
-    else:          concerns.append("limited JD alignment")
-    if cgrow > 65: strengths.append("clear career growth")
-    elif cgrow < 40: concerns.append("flat career trajectory")
-    if yoe < 3:    concerns.append(f"low experience ({yoe:.0f} yrs, JD wants 5-9)")
-    elif yoe > 12: strengths.append("deep domain experience")
-
-    tone = "Strong fit" if rank <= 15 else ("Good fit" if rank <= 40 else ("Moderate fit" if rank <= 70 else "Weak fit"))
-    concern_str = f" Concerns: {'; '.join(concerns)}." if concerns else ""
-    strength_str = f" {'; '.join(strengths).capitalize()}." if strengths else ""
-    line2 = f"{tone} - overall score {overall:.1f}/100.{strength_str}{concern_str}"
-
-    return f"{line1} {line2}"
+    """Compatibility wrapper; actual logic lives in ReasoningGenerator."""
+    return ReasoningGenerator().generate(
+        candidate=full_data,
+        rank=rc.get('rank', 0),
+        scores=scores | {'overall_score': rc.get('overall_score', 0)},
+    )
 
 
 def main():
@@ -297,10 +261,15 @@ def main():
 
     # Step 5: Generate reasoning
     print(f"\n[5/7] Generating reasoning...")
+    reasoning_gen = ReasoningGenerator(jd_requirements)
     for rc in result['candidates']:
         cid = rc['resume_id'].replace('.txt', '')
         full_data = candidate_lookup.get(cid, {})
-        rc['reasoning']      = build_reasoning(rc, full_data, rc.get('all_scores', {}))
+        rc['reasoning']      = reasoning_gen.generate(
+            candidate=full_data,
+            rank=rc.get('rank', 0),
+            scores=rc.get('all_scores', {}) | {'overall_score': rc.get('overall_score', 0)}
+        )
         rc['candidate_data'] = full_data
         rc['resume_id']      = cid  # strip .txt permanently
 
